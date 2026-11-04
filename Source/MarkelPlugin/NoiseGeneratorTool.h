@@ -14,7 +14,7 @@ class MARKELPLUGIN_API UNoiseGeneratorTool : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
-	UFUNCTION(BlueprintCallable, Category = "PerlinNoise");
-	static TArray<int> PerlinNoise();
+	UFUNCTION(BlueprintCallable, Category = "PerlinNoise")
+	static TArray<int32> PerlinNoise();
 	
 };
