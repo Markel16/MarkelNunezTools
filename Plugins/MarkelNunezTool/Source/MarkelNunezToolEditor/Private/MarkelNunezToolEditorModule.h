@@ -33,6 +33,8 @@ private:
 	float SphereThreshold = 0.75f;
 	float Spacing = 120.0f;
 	int32 NumGeneratedCubes = 0;
+	FSoftObjectPath CubeTreeMesh;
+	FSoftObjectPath SphereTreeMesh;
 
 	TStrongObjectPtr<UTexture2D> PerlinTexture;
 	FSlateBrush PerlinBrush;

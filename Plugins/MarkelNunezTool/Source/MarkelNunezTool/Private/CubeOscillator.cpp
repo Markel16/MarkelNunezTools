@@ -27,9 +27,7 @@ void ACubeOscillator::BeginPlay()
 ACubeOscillator::FOscillation ACubeOscillator::MakeOscillation(const FVector& Position) const
 {
 	// Seeded from the position so every cube keeps the same speed and phase between plays.
-	const FRandomStream Random(static_cast<int32>(HashCombine(
-		GetTypeHash(FMath::RoundToInt(Position.X)),
-		GetTypeHash(FMath::RoundToInt(Position.Y)))));
+	const FRandomStream Random(static_cast<int32>(HashCombine(GetTypeHash(FMath::RoundToInt(Position.X)),GetTypeHash(FMath::RoundToInt(Position.Y)))));
 
 	FOscillation Oscillation;
 	Oscillation.Speed = Random.FRandRange(FMath::Min(MinSpeed, MaxSpeed), FMath::Max(MinSpeed, MaxSpeed));
@@ -109,8 +107,7 @@ void ACubeOscillator::Tick(const float DeltaSeconds)
 	{
 		if (IsValid(Cubes[Index]))
 		{
-			Cubes[Index]->SetActorLocation(
-				BasePositions[Index] + FVector(0.0f, 0.0f, WaveHeight(ActorOscillations[Index])));
+			Cubes[Index]->SetActorLocation(BasePositions[Index] + FVector(0.0f, 0.0f, WaveHeight(ActorOscillations[Index])));
 		}
 	}
 

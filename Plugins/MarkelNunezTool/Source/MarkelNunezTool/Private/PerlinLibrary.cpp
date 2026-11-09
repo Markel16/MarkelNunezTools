@@ -7,9 +7,7 @@
 float UPerlinLibrary::GetPerlinValue(const int32 X, const int32 Y, const float Scale, const int32 Seed)
 {
 	const float SafeScale = FMath::Max(Scale, UE_SMALL_NUMBER);
-	const FVector2D SamplePoint(
-		X * SafeScale + Seed * 31.7f,
-		Y * SafeScale + Seed * 17.3f);
+	const FVector2D SamplePoint(X * SafeScale + Seed * 31.7f,Y * SafeScale + Seed * 17.3f);
 
 	return FMath::Clamp((FMath::PerlinNoise2D(SamplePoint) + 1.0f) * 0.5f, 0.0f, 1.0f);
 }

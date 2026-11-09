@@ -13,6 +13,8 @@
 #include "ProfilingDebugging/MiscTrace.h"
 #include "ScopedTransaction.h"
 #include "PerlinLibrary.h"
+#include "PerlinPCGLibrary.h"
+#include "PropertyCustomizationHelpers.h"
 #include "Engine/StaticMeshActor.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
@@ -129,6 +131,26 @@ namespace
 				.OnValueChanged_Lambda([&Value](const T NewValue) { Value = NewValue; })
 			];
 	}
+
+	TSharedRef<SWidget> MakeMeshRow(const FText& Label, FSoftObjectPath& MeshPath)
+	{
+		return SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(0.0f, 0.0f, 8.0f, 0.0f)
+			[
+				SNew(STextBlock).Text(Label)
+			]
+			+ SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			[
+				SNew(SObjectPropertyEntryBox)
+				.AllowedClass(UStaticMesh::StaticClass())
+				.ObjectPath_Lambda([&MeshPath]() { return MeshPath.ToString(); })
+				.OnObjectChanged_Lambda([&MeshPath](const FAssetData& AssetData) { MeshPath = AssetData.GetSoftObjectPath(); })
+			];
+	}
 }
 
 void FMarkelNunezToolEditorModule::RegeneratePerlin()
@@ -218,6 +240,40 @@ TSharedRef<SDockTab> FMarkelNunezToolEditorModule::OnSpawnPerlinTab(const FSpawn
 				.OnClicked_Lambda([this]()
 				{
 					SpawnOscillator();
+					return FReply::Handled();
+				})
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f, 12.0f, 4.0f, 4.0f)
+			[
+				SNew(STextBlock).Text(NSLOCTEXT("MarkelNunezTool", "PCGHeader", "PCG"))
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				SNew(SButton)
+				.Text(NSLOCTEXT("MarkelNunezTool", "SpawnPCGButton", "Spawn PCG Perlin"))
+				.OnClicked_Lambda([]()
+				{
+					UPerlinPCGLibrary::SpawnPerlinPCG();
+					return FReply::Handled();
+				})
+			]
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				MakeMeshRow(NSLOCTEXT("MarkelNunezTool", "CubeTreeLabel", "Cube tree"), CubeTreeMesh)
+			]
+			+ SVerticalBox::Slot().AutoHeight()
+			[
+				MakeMeshRow(NSLOCTEXT("MarkelNunezTool", "SphereTreeLabel", "Sphere tree"), SphereTreeMesh)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				SNew(SButton)
+				.Text(NSLOCTEXT("MarkelNunezTool", "ReplaceWithTreesButton", "Replace with trees"))
+				.OnClicked_Lambda([this]()
+				{
+					UPerlinPCGLibrary::ReplaceShapesWithTrees(
+						Cast<UStaticMesh>(CubeTreeMesh.TryLoad()),
+						Cast<UStaticMesh>(SphereTreeMesh.TryLoad()));
 					return FReply::Handled();
 				})
 			]

@@ -11,10 +11,13 @@ public class MarkelNunezToolEditor : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AssetRegistry",
 				"Core",
 				"CoreUObject",
 				"Engine",
 				"MarkelNunezTool",
+				"PCG",
+				"PropertyEditor",
 				"Slate",
 				"SlateCore",
 				"UnrealEd",
