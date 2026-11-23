@@ -32,7 +32,7 @@ namespace
 	// The default PCG volume brush is 200 units wide.
 	constexpr double VolumeBrushHalfSize = 100.0;
 
-	UWorld* GetEditorWorld()
+	UWorld* GetPCGEditorWorld()
 	{
 		UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
 		if (!World)
@@ -156,7 +156,7 @@ namespace
 
 	UPCGComponent* FindPerlinPCGComponent()
 	{
-		UWorld* World = GetEditorWorld();
+		UWorld* World = GetPCGEditorWorld();
 		APCGVolume* Volume = World ? FindPerlinVolume(World) : nullptr;
 		if (!Volume || !Volume->PCGComponent)
 		{
@@ -224,7 +224,7 @@ namespace
 
 APCGVolume* UPerlinPCGLibrary::SpawnPerlinPCG()
 {
-	UWorld* World = GetEditorWorld();
+	UWorld* World = GetPCGEditorWorld();
 	UPCGGraph* Graph = LoadCubesGraph();
 	if (!World || !Graph)
 	{
@@ -243,7 +243,7 @@ APCGVolume* UPerlinPCGLibrary::SpawnPerlinPCG()
 
 bool UPerlinPCGLibrary::ReplaceShapesWithTrees(UStaticMesh* CubeTree, UStaticMesh* SphereTree, const float PositionJitter)
 {
-	UWorld* World = GetEditorWorld();
+	UWorld* World = GetPCGEditorWorld();
 	UPCGGraph* SourceGraph = LoadCubesGraph();
 	CubeTree = LoadMeshOrDefault(CubeTree, DefaultCubeTreePath);
 	SphereTree = LoadMeshOrDefault(SphereTree, DefaultSphereTreePath);

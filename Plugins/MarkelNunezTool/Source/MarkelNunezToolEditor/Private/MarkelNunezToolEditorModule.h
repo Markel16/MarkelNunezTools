@@ -40,4 +40,17 @@ private:
 	FSlateBrush PerlinBrush;
 
 	static const FName PerlinTabName;
+
+	// City Generator tab (CityToolTab.cpp). Sizes and heights in meters.
+	TSharedRef<SDockTab> OnSpawnCityTab(const FSpawnTabArgs& Args);
+
+	double CitySizeMeters = 400.0;
+	double BlockSizeMeters = 60.0;
+	double BuildingDensity = 0.6;
+	double BuildingHeightMeters = 30.0;
+	double BuildingVariation = 0.5;
+	int32 CitySeed = 1234;
+	FText CityStatus;
+
+	static const FName CityTabName;
 };

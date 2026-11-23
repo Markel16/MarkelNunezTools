@@ -14,6 +14,7 @@ public class MarkelNunezTool : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"PCG",
 			}
 			);
 	}
