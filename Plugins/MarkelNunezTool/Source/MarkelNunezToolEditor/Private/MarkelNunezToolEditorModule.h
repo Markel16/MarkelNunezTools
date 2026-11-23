@@ -49,6 +49,9 @@ private:
 	double BuildingDensity = 0.6;
 	double BuildingHeightMeters = 30.0;
 	double BuildingVariation = 0.5;
+	double ParkRatio = 0.15;
+	double ParkTreeDensity = 0.6;
+	double VegetationScaleVariation = 0.4;
 	int32 CitySeed = 1234;
 	FText CityStatus;
 

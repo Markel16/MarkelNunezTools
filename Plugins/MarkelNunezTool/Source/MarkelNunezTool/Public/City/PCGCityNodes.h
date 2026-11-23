@@ -21,6 +21,11 @@ namespace PCGCityPins
 	MARKELNUNEZTOOL_API extern const FName Buildings;
 	MARKELNUNEZTOOL_API extern const FName Lamps;
 	MARKELNUNEZTOOL_API extern const FName Trees;
+	MARKELNUNEZTOOL_API extern const FName Buildable;
+	MARKELNUNEZTOOL_API extern const FName Parks;
+	MARKELNUNEZTOOL_API extern const FName Lawns;
+	MARKELNUNEZTOOL_API extern const FName ParkTrees;
+	MARKELNUNEZTOOL_API extern const FName ParkBushes;
 }
 
 // Gathers the city parameters into one Attribute Set that travels to every layer on the Params pin.
@@ -54,6 +59,18 @@ public:
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "City", meta = (PCG_Overridable, ClampMin = "0", ClampMax = "1"))
 	double BuildingVariation = 0.5;
+
+	// Share of blocks that become parks instead of being built.
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Parks", meta = (PCG_Overridable, ClampMin = "0", ClampMax = "1"))
+	double ParkRatio = 0.15;
+
+	// Chance of a tree in each park cell; cells without a tree may get a bush.
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Parks", meta = (PCG_Overridable, ClampMin = "0", ClampMax = "1"))
+	double ParkTreeDensity = 0.6;
+
+	// 0 = every plant the same size, 1 = from half to one and a half times the base size.
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Parks", meta = (PCG_Overridable, ClampMin = "0", ClampMax = "1"))
+	double VegetationScaleVariation = 0.4;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Constants", meta = (PCG_Overridable, ClampMin = "1"))
 	double StreetWidth = 800.0;
@@ -251,6 +268,44 @@ public:
 	virtual FName GetDefaultNodeName() const override { return TEXT("CityCleanOverlaps"); }
 	virtual FText GetDefaultNodeTitle() const override { return NSLOCTEXT("PCGCity", "OverlapsTitle", "City Clean Overlaps"); }
 	virtual FText GetNodeTooltipText() const override { return NSLOCTEXT("PCGCity", "OverlapsTooltip", "Step 10: removes anything on the road or inside a building, then checks every layer."); }
+#endif
+
+	virtual bool RunLayer(FPCGContext* Context, const FCityParams& Params) const override;
+
+protected:
+	virtual TArray<FName> GetInputLabels() const override;
+	virtual TArray<FName> GetOutputLabels() const override;
+};
+
+UCLASS(BlueprintType, ClassGroup = (Procedural))
+class MARKELNUNEZTOOL_API UPCGCityParksSettings : public UPCGCityLayerSettings
+{
+	GENERATED_BODY()
+
+public:
+#if WITH_EDITOR
+	virtual FName GetDefaultNodeName() const override { return TEXT("CityParks"); }
+	virtual FText GetDefaultNodeTitle() const override { return NSLOCTEXT("PCGCity", "ParksTitle", "City Parks"); }
+	virtual FText GetNodeTooltipText() const override { return NSLOCTEXT("PCGCity", "ParksTooltip", "Parks: turns ParkRatio of the blocks into parks; the rest go on as buildable blocks."); }
+#endif
+
+	virtual bool RunLayer(FPCGContext* Context, const FCityParams& Params) const override;
+
+protected:
+	virtual TArray<FName> GetInputLabels() const override;
+	virtual TArray<FName> GetOutputLabels() const override;
+};
+
+UCLASS(BlueprintType, ClassGroup = (Procedural))
+class MARKELNUNEZTOOL_API UPCGCityParkVegetationSettings : public UPCGCityLayerSettings
+{
+	GENERATED_BODY()
+
+public:
+#if WITH_EDITOR
+	virtual FName GetDefaultNodeName() const override { return TEXT("CityParkVegetation"); }
+	virtual FText GetDefaultNodeTitle() const override { return NSLOCTEXT("PCGCity", "ParkVegetationTitle", "City Park Vegetation"); }
+	virtual FText GetNodeTooltipText() const override { return NSLOCTEXT("PCGCity", "ParkVegetationTooltip", "Parks: a lawn in each park and trees or bushes scattered over a grid of cells."); }
 #endif
 
 	virtual bool RunLayer(FPCGContext* Context, const FCityParams& Params) const override;

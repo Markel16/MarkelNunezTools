@@ -16,6 +16,12 @@ struct MARKELNUNEZTOOL_API FCityParams
 	double BuildingHeight = 3000.0;
 	double BuildingVariation = 0.5;
 
+	// Parks (improvement): share of blocks that become parks, chance of a tree in each park cell,
+	// and how much the vegetation scale varies (0 = all the same size).
+	double ParkRatio = 0.15;
+	double ParkTreeDensity = 0.6;
+	double VegetationScaleVariation = 0.4;
+
 	// Internal constants.
 	double StreetWidth = 800.0;
 	double SidewalkWidth = 300.0;
@@ -29,6 +35,16 @@ struct MARKELNUNEZTOOL_API FCityParams
 	double LampRadius = 15.0;
 	double TreeScale = 0.5;
 	double TreeCrown = 300.0;
+
+	// Park vegetation. Mesh sizes are in mesh units (PCG_Tree_02 is the widest park tree, PCG_Sapling_01 the bush).
+	double LawnThickness = 5.0;
+	double ParkCellSize = 1000.0;
+	double ParkTreeScale = 0.6;
+	double ParkTreeCrownLocal = 680.0;
+	double ParkTreeHeightLocal = 1250.0;
+	double ParkBushChance = 0.5;
+	double ParkBushScale = 0.8;
+	double ParkBushSizeLocal = 220.0;
 
 	double Cell() const { return BlockSize + StreetWidth; }
 	int32 CrossingsPerSide() const;
@@ -65,6 +81,11 @@ struct MARKELNUNEZTOOL_API FCityLayout
 	TArray<FCityPiece> Crossings;
 	TArray<FCityPiece> Streets;
 	TArray<FCityPiece> Blocks;
+	TArray<FCityPiece> BuildableBlocks;
+	TArray<FCityPiece> Parks;
+	TArray<FCityPiece> Lawns;
+	TArray<FCityPiece> ParkTrees;
+	TArray<FCityPiece> ParkBushes;
 	TArray<FCityPiece> Lots;
 	TArray<FCityPiece> Built;
 	TArray<FCityPiece> Buildings;
@@ -93,6 +114,14 @@ namespace CityLayout
 
 	// Step 05: one raised sidewalk block in each cell between streets, with BlockID.
 	MARKELNUNEZTOOL_API TArray<FCityPiece> BuildBlocks(const FCityParams& Params, TConstArrayView<FCityPiece> Crossings);
+
+	// Parks: turns round(ParkRatio * blocks) blocks into parks, picked by a seeded value per block.
+	// The rest are returned as buildable blocks for the lots.
+	MARKELNUNEZTOOL_API void SplitParks(const FCityParams& Params, TConstArrayView<FCityPiece> Blocks, int32 Seed, TArray<FCityPiece>& OutBuildable, TArray<FCityPiece>& OutParks);
+
+	// Parks: a lawn over the inside of each park and, in a grid of cells, one tree (chance ParkTreeDensity)
+	// or one bush per cell, jittered inside its cell so they never overlap.
+	MARKELNUNEZTOOL_API void BuildParkVegetation(const FCityParams& Params, TConstArrayView<FCityPiece> Parks, int32 Seed, TArray<FCityPiece>& OutLawns, TArray<FCityPiece>& OutTrees, TArray<FCityPiece>& OutBushes);
 
 	// Step 06: a grid of lots inside each block, marking the ones that touch the street (Frontage).
 	MARKELNUNEZTOOL_API TArray<FCityPiece> BuildLots(const FCityParams& Params, TConstArrayView<FCityPiece> Blocks);

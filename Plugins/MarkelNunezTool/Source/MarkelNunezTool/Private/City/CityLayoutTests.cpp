@@ -132,4 +132,67 @@ bool FCityLayoutParametersTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCityLayoutParksTest, "MarkelNunezTool.City.Parks", CityTestFlags)
+bool FCityLayoutParksTest::RunTest(const FString& Parameters)
+{
+	FCityParams Params;
+	Params.BuildingDensity = 1.0;
+	Params.ParkRatio = 0.2;
+	const FCityLayout Layout = CityLayout::Generate(Params, FVector::ZeroVector, 3);
+
+	TestEqual(TEXT("ParkRatio picks exactly that share of blocks"), Layout.Parks.Num(), FMath::RoundToInt32(0.2 * Layout.Blocks.Num()));
+	TestEqual(TEXT("Every block is either a park or buildable"), Layout.Parks.Num() + Layout.BuildableBlocks.Num(), Layout.Blocks.Num());
+	TestEqual(TEXT("Each park gets a lawn"), Layout.Lawns.Num(), Layout.Parks.Num());
+	TestTrue(TEXT("Parks have trees"), Layout.ParkTrees.Num() > 0);
+	TestTrue(TEXT("Parks have bushes"), Layout.ParkBushes.Num() > 0);
+
+	TSet<int32> ParkIDs;
+	for (const FCityPiece& Park : Layout.Parks)
+	{
+		ParkIDs.Add(Park.BlockID);
+	}
+	TestFalse(TEXT("No building stands in a park"), Layout.Buildings.ContainsByPredicate([&ParkIDs](const FCityPiece& Building) { return ParkIDs.Contains(Building.BlockID); }));
+
+	TArray<FCityPiece> Plants = Layout.ParkTrees;
+	Plants.Append(Layout.ParkBushes);
+	TestFalse(TEXT("Park plants do not overlap each other"), AnyOverlap(Plants, Plants, true));
+
+	const bool bAllInsideLawns = !Plants.ContainsByPredicate([&Layout](const FCityPiece& Plant)
+	{
+		const FVector2D Base(Plant.Location);
+		return !Layout.Lawns.ContainsByPredicate([&Base](const FCityPiece& Lawn) { return Lawn.GetFootprint().IsInside(Base); });
+	});
+	TestTrue(TEXT("Every park plant grows on a lawn, never on the sidewalk"), bAllInsideLawns);
+
+	FCityParams NoParks = Params;
+	NoParks.ParkRatio = 0.0;
+	TestEqual(TEXT("ParkRatio 0 makes no parks"), CityLayout::Generate(NoParks, FVector::ZeroVector, 3).Parks.Num(), 0);
+
+	FCityParams NoTrees = Params;
+	NoTrees.ParkTreeDensity = 0.0;
+	TestEqual(TEXT("ParkTreeDensity 0 leaves parks without trees"), CityLayout::Generate(NoTrees, FVector::ZeroVector, 3).ParkTrees.Num(), 0);
+
+	FCityParams DenseTrees = Params;
+	DenseTrees.ParkTreeDensity = 1.0;
+	const FCityLayout DenseLayout = CityLayout::Generate(DenseTrees, FVector::ZeroVector, 3);
+	TestTrue(TEXT("ParkTreeDensity 1 fills every cell with a tree"), DenseLayout.ParkTrees.Num() > Layout.ParkTrees.Num() && DenseLayout.ParkBushes.IsEmpty());
+
+	const auto ScaleRange = [](const FCityLayout& InLayout)
+	{
+		double Min = TNumericLimits<double>::Max();
+		double Max = 0.0;
+		for (const FCityPiece& Tree : InLayout.ParkTrees)
+		{
+			Min = FMath::Min(Min, Tree.Scale.X);
+			Max = FMath::Max(Max, Tree.Scale.X);
+		}
+		return Max - Min;
+	};
+	FCityParams Uniform = Params;
+	Uniform.VegetationScaleVariation = 0.0;
+	TestTrue(TEXT("VegetationScaleVariation 0 makes every tree the same size"), ScaleRange(CityLayout::Generate(Uniform, FVector::ZeroVector, 3)) < UE_KINDA_SMALL_NUMBER);
+	TestTrue(TEXT("VegetationScaleVariation above 0 varies the tree size"), ScaleRange(Layout) > 0.05);
+	return true;
+}
+
 #endif

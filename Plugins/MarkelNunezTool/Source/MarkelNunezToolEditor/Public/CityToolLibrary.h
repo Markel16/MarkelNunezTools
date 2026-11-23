@@ -27,6 +27,9 @@ public:
 		double BuildingDensity = 0.6,
 		double BuildingHeightMeters = 30.0,
 		double BuildingVariation = 0.5,
+		double ParkRatio = 0.15,
+		double ParkTreeDensity = 0.6,
+		double VegetationScaleVariation = 0.4,
 		int32 Seed = 1234);
 
 	// Removes everything PCG generated and every actor tagged CityGenerated, including the City volume.
@@ -40,5 +43,8 @@ public:
 		double BlockSizeMeters = 60.0,
 		double BuildingDensity = 0.6,
 		double BuildingHeightMeters = 30.0,
-		double BuildingVariation = 0.5);
+		double BuildingVariation = 0.5,
+		double ParkRatio = 0.15,
+		double ParkTreeDensity = 0.6,
+		double VegetationScaleVariation = 0.4);
 };

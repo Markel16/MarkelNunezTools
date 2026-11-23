@@ -15,10 +15,23 @@ namespace
 	constexpr uint32 DensitySalt = 0x1A2B3C4D;
 	constexpr uint32 BuildingSalt = 0x5E6F7081;
 	constexpr uint32 PropSalt = 0x92A3B4C5;
+	constexpr uint32 ParkSalt = 0xD6E7F809;
+	constexpr uint32 VegetationSalt = 0x1B2C3D4E;
 
 	FRandomStream MakeStream(const int32 PieceSeed, const int32 GraphSeed, const uint32 Salt)
 	{
 		return FRandomStream(static_cast<int32>(HashCombine(HashCombine(static_cast<uint32>(PieceSeed), static_cast<uint32>(GraphSeed)), Salt)));
+	}
+
+	// A plant with its pivot at the base of the trunk and a box of the given mesh-unit width and height.
+	FCityPiece MakePlant(const FVector& Base, const double Scale, const double Yaw, const double WidthLocal, const double HeightLocal)
+	{
+		FCityPiece Plant;
+		Plant.Location = Base;
+		Plant.Yaw = Yaw;
+		Plant.Scale = FVector(Scale);
+		Plant.LocalBounds = FBox(FVector(-WidthLocal / 2.0, -WidthLocal / 2.0, 0.0), FVector(WidthLocal / 2.0, WidthLocal / 2.0, HeightLocal));
+		return Plant;
 	}
 
 	FVector GetSize(const FCityPiece& Piece)
@@ -259,6 +272,97 @@ TArray<FCityPiece> CityLayout::BuildBlocks(const FCityParams& Params, TConstArra
 	return Blocks;
 }
 
+void CityLayout::SplitParks(const FCityParams& Params, TConstArrayView<FCityPiece> Blocks, const int32 Seed, TArray<FCityPiece>& OutBuildable, TArray<FCityPiece>& OutParks)
+{
+	OutBuildable.Reset();
+	OutParks.Reset();
+
+	// Sorting by a seeded value per block and taking the first ones gives exactly the requested share,
+	// always the same blocks for the same seed.
+	TArray<TPair<float, int32>> Order;
+	for (int32 Index = 0; Index < Blocks.Num(); ++Index)
+	{
+		Order.Emplace(MakeStream(Blocks[Index].Seed, Seed, ParkSalt).FRand(), Index);
+	}
+	Order.Sort([](const TPair<float, int32>& A, const TPair<float, int32>& B)
+	{
+		return A.Key != B.Key ? A.Key < B.Key : A.Value < B.Value;
+	});
+
+	const int32 ParkCount = FMath::Clamp(FMath::RoundToInt(FMath::Clamp(Params.ParkRatio, 0.0, 1.0) * Blocks.Num()), 0, Blocks.Num());
+	TBitArray<> IsPark(false, Blocks.Num());
+	for (int32 Rank = 0; Rank < ParkCount; ++Rank)
+	{
+		IsPark[Order[Rank].Value] = true;
+	}
+
+	for (int32 Index = 0; Index < Blocks.Num(); ++Index)
+	{
+		(IsPark[Index] ? OutParks : OutBuildable).Add(Blocks[Index]);
+	}
+}
+
+void CityLayout::BuildParkVegetation(const FCityParams& Params, TConstArrayView<FCityPiece> Parks, const int32 Seed, TArray<FCityPiece>& OutLawns, TArray<FCityPiece>& OutTrees, TArray<FCityPiece>& OutBushes)
+{
+	OutLawns.Reset();
+	OutTrees.Reset();
+	OutBushes.Reset();
+
+	const double Variation = FMath::Clamp(Params.VegetationScaleVariation, 0.0, 1.0);
+	const double TreeDensity = FMath::Clamp(Params.ParkTreeDensity, 0.0, 1.0);
+
+	for (const FCityPiece& Park : Parks)
+	{
+		// The park fills the inside of the block; the sidewalk ring stays for the street props.
+		const FBox ParkBox = Park.GetWorldBox();
+		const FVector2D Inner = FVector2D(ParkBox.GetSize()) - FVector2D(2.0 * Params.SidewalkWidth);
+		if (Inner.X <= 0.0 || Inner.Y <= 0.0)
+		{
+			continue;
+		}
+
+		const FVector2D Center(ParkBox.GetCenter());
+		FCityPiece& Lawn = OutLawns.Add_GetRef(FCityPiece::MakeBox(FVector(Center, ParkBox.Max.Z + Params.LawnThickness / 2.0), FVector(Inner, Params.LawnThickness)));
+		Lawn.BlockID = Park.BlockID;
+
+		const double GroundZ = ParkBox.Max.Z + Params.LawnThickness;
+		const FIntPoint Cells(
+			FMath::Max(1, FMath::FloorToInt(Inner.X / Params.ParkCellSize)),
+			FMath::Max(1, FMath::FloorToInt(Inner.Y / Params.ParkCellSize)));
+		const FVector2D CellSize(Inner.X / Cells.X, Inner.Y / Cells.Y);
+		const FVector2D Corner = Center - Inner / 2.0;
+
+		for (int32 J = 0; J < Cells.Y; ++J)
+		{
+			for (int32 I = 0; I < Cells.X; ++I)
+			{
+				const FVector CellCenter(Corner + FVector2D(I + 0.5, J + 0.5) * CellSize, GroundZ);
+				FRandomStream Random = MakeStream(SeedFromPosition(CellCenter), Seed, VegetationSalt);
+
+				const bool bTree = Random.FRand() < TreeDensity;
+				const bool bBush = !bTree && Random.FRand() < Params.ParkBushChance;
+				if (!bTree && !bBush)
+				{
+					continue;
+				}
+
+				const double ScaleFactor = 1.0 + Variation * Random.FRandRange(-0.5, 0.5);
+				const double Yaw = Random.FRandRange(0.0, 360.0);
+				FCityPiece Plant = bTree
+					? MakePlant(CellCenter, Params.ParkTreeScale * ScaleFactor, Yaw, Params.ParkTreeCrownLocal, Params.ParkTreeHeightLocal)
+					: MakePlant(CellCenter, Params.ParkBushScale * ScaleFactor, Yaw, Params.ParkBushSizeLocal, Params.ParkBushSizeLocal);
+
+				// Move it inside its own cell as far as its footprint allows, so plants never overlap.
+				const FVector2D Margin = ((CellSize - Plant.GetFootprint().GetSize()) / 2.0).ComponentMax(FVector2D::ZeroVector);
+				Plant.Location += FVector(Random.FRandRange(-1.0, 1.0) * Margin.X, Random.FRandRange(-1.0, 1.0) * Margin.Y, 0.0);
+				Plant.Seed = SeedFromPosition(Plant.Location);
+				Plant.BlockID = Park.BlockID;
+				(bTree ? OutTrees : OutBushes).Add(Plant);
+			}
+		}
+	}
+}
+
 TArray<FCityPiece> CityLayout::BuildLots(const FCityParams& Params, TConstArrayView<FCityPiece> Blocks)
 {
 	TArray<FCityPiece> Lots;
@@ -495,7 +599,7 @@ FCityOverlapReport CityLayout::CleanOverlaps(const FCityParams& Params, TConstAr
 	{
 		Report.FailedChecks.Add(FString::Printf(TEXT("Expected %d crossings but got %d."), Count * Count, Crossings.Num()));
 	}
-	if (Params.BuildingDensity > 0.0 && InOutBuildings.IsEmpty())
+	if (Params.BuildingDensity > 0.0 && Params.ParkRatio < 1.0 && InOutBuildings.IsEmpty())
 	{
 		Report.FailedChecks.Add(TEXT("BuildingDensity is above 0 but no buildings were generated."));
 	}
@@ -512,7 +616,9 @@ FCityLayout CityLayout::Generate(const FCityParams& Params, const FVector& Origi
 	Layout.Crossings = BuildCrossings(Params, Origin);
 	Layout.Streets = BuildStreets(Params, Layout.Crossings);
 	Layout.Blocks = BuildBlocks(Params, Layout.Crossings);
-	Layout.Lots = BuildLots(Params, Layout.Blocks);
+	SplitParks(Params, Layout.Blocks, Seed, Layout.BuildableBlocks, Layout.Parks);
+	BuildParkVegetation(Params, Layout.Parks, Seed, Layout.Lawns, Layout.ParkTrees, Layout.ParkBushes);
+	Layout.Lots = BuildLots(Params, Layout.BuildableBlocks);
 	Layout.Built = PickBuiltLots(Params, Layout.Lots, Seed);
 	Layout.Buildings = BuildBuildings(Params, Layout.Built, Seed);
 	BuildProps(Params, Layout.Blocks, Layout.Crossings, Seed, Layout.Lamps, Layout.Trees);
@@ -528,7 +634,9 @@ FCityLayout CityLayout::Generate(const FCityParams& Params, const FVector& Origi
 bool CityLayout::AreEqual(const FCityLayout& A, const FCityLayout& B)
 {
 	return ArePiecesEqual(A.Crossings, B.Crossings) && ArePiecesEqual(A.Streets, B.Streets)
-		&& ArePiecesEqual(A.Blocks, B.Blocks) && ArePiecesEqual(A.Lots, B.Lots)
+		&& ArePiecesEqual(A.Blocks, B.Blocks) && ArePiecesEqual(A.Parks, B.Parks)
+		&& ArePiecesEqual(A.Lawns, B.Lawns) && ArePiecesEqual(A.ParkTrees, B.ParkTrees)
+		&& ArePiecesEqual(A.ParkBushes, B.ParkBushes) && ArePiecesEqual(A.Lots, B.Lots)
 		&& ArePiecesEqual(A.Built, B.Built) && ArePiecesEqual(A.Buildings, B.Buildings)
 		&& ArePiecesEqual(A.Lamps, B.Lamps) && ArePiecesEqual(A.Trees, B.Trees);
 }

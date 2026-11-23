@@ -54,7 +54,7 @@ TSharedRef<SDockTab> FMarkelNunezToolEditorModule::OnSpawnCityTab(const FSpawnTa
 
 	const auto Generate = [this]()
 	{
-		const bool bGenerated = UCityToolLibrary::GenerateCity(CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, CitySeed);
+		const bool bGenerated = UCityToolLibrary::GenerateCity(CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation, CitySeed);
 		CityStatus = bGenerated
 			? FText::Format(NSLOCTEXT("MarkelNunezTool", "CityGenerated", "Generated with seed {0}."), FText::AsNumber(CitySeed))
 			: NSLOCTEXT("MarkelNunezTool", "CityGenerateFailed", "Generation failed, see the Output Log (LogTemp / LogPCG).");
@@ -86,6 +86,18 @@ TSharedRef<SDockTab> FMarkelNunezToolEditorModule::OnSpawnCityTab(const FSpawnTa
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
 			[
+				MakeRow(NSLOCTEXT("MarkelNunezTool", "ParkRatioLabel", "Park blocks (0-1)"), ParkRatio, 0.0, 1.0)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				MakeRow(NSLOCTEXT("MarkelNunezTool", "ParkTreeDensityLabel", "Park tree density (0-1)"), ParkTreeDensity, 0.0, 1.0)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				MakeRow(NSLOCTEXT("MarkelNunezTool", "VegetationScaleVariationLabel", "Vegetation scale variation (0-1)"), VegetationScaleVariation, 0.0, 1.0)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
 				MakeRow(NSLOCTEXT("MarkelNunezTool", "CitySeedLabel", "Seed"), CitySeed, 0, 999999)
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f, 12.0f, 4.0f, 4.0f)
@@ -105,7 +117,7 @@ TSharedRef<SDockTab> FMarkelNunezToolEditorModule::OnSpawnCityTab(const FSpawnTa
 				MakeButton(NSLOCTEXT("MarkelNunezTool", "TestDeterminismButton", "Test determinism"), [this]()
 				{
 					FString Report;
-					const bool bPassed = UCityToolLibrary::TestDeterminism(Report, CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation);
+					const bool bPassed = UCityToolLibrary::TestDeterminism(Report, CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation);
 					CityStatus = FText::FromString(FString::Printf(TEXT("%s %s"), bPassed ? TEXT("PASSED.") : TEXT("FAILED."), *Report));
 				})
 			]

@@ -25,6 +25,11 @@ namespace PCGCityPins
 	const FName Buildings(TEXT("Buildings"));
 	const FName Lamps(TEXT("Lamps"));
 	const FName Trees(TEXT("Trees"));
+	const FName Buildable(TEXT("Buildable"));
+	const FName Parks(TEXT("Parks"));
+	const FName Lawns(TEXT("Lawns"));
+	const FName ParkTrees(TEXT("ParkTrees"));
+	const FName ParkBushes(TEXT("ParkBushes"));
 }
 
 namespace
@@ -57,6 +62,9 @@ namespace
 		{ TEXT("BuildingDensity"), &FCityParams::BuildingDensity },
 		{ TEXT("BuildingHeight"), &FCityParams::BuildingHeight },
 		{ TEXT("BuildingVariation"), &FCityParams::BuildingVariation },
+		{ TEXT("ParkRatio"), &FCityParams::ParkRatio },
+		{ TEXT("ParkTreeDensity"), &FCityParams::ParkTreeDensity },
+		{ TEXT("VegetationScaleVariation"), &FCityParams::VegetationScaleVariation },
 		{ TEXT("StreetWidth"), &FCityParams::StreetWidth },
 		{ TEXT("SidewalkWidth"), &FCityParams::SidewalkWidth },
 		{ TEXT("LotSize"), &FCityParams::LotSize },
@@ -281,6 +289,9 @@ FCityParams UPCGCityParamsSettings::ToCityParams() const
 	Params.BuildingDensity = BuildingDensity;
 	Params.BuildingHeight = BuildingHeight;
 	Params.BuildingVariation = BuildingVariation;
+	Params.ParkRatio = ParkRatio;
+	Params.ParkTreeDensity = ParkTreeDensity;
+	Params.VegetationScaleVariation = VegetationScaleVariation;
 	Params.StreetWidth = StreetWidth;
 	Params.SidewalkWidth = SidewalkWidth;
 	Params.LotSize = LotSize;
@@ -351,6 +362,39 @@ bool UPCGCityBlocksSettings::RunLayer(FPCGContext* Context, const FCityParams& P
 {
 	const TArray<FCityPiece> Crossings = ReadPieces(Context, PCGCityPins::Crossings);
 	WritePieces(Context, PCGCityPins::Blocks, CityLayout::BuildBlocks(Params, Crossings), ECityAttributes::ColRow | ECityAttributes::BlockID | ECityAttributes::BlockCenter);
+	return true;
+}
+
+TArray<FName> UPCGCityParksSettings::GetInputLabels() const { return { PCGCityPins::Blocks, PCGCityPins::Params }; }
+TArray<FName> UPCGCityParksSettings::GetOutputLabels() const { return { PCGCityPins::Buildable, PCGCityPins::Parks }; }
+
+bool UPCGCityParksSettings::RunLayer(FPCGContext* Context, const FCityParams& Params) const
+{
+	const TArray<FCityPiece> Blocks = ReadPieces(Context, PCGCityPins::Blocks);
+	TArray<FCityPiece> Buildable;
+	TArray<FCityPiece> Parks;
+	CityLayout::SplitParks(Params, Blocks, Context->GetSeed(), Buildable, Parks);
+
+	const ECityAttributes BlockAttributes = ECityAttributes::ColRow | ECityAttributes::BlockID | ECityAttributes::BlockCenter;
+	WritePieces(Context, PCGCityPins::Buildable, Buildable, BlockAttributes);
+	WritePieces(Context, PCGCityPins::Parks, Parks, BlockAttributes);
+	return true;
+}
+
+TArray<FName> UPCGCityParkVegetationSettings::GetInputLabels() const { return { PCGCityPins::Parks, PCGCityPins::Params }; }
+TArray<FName> UPCGCityParkVegetationSettings::GetOutputLabels() const { return { PCGCityPins::Lawns, PCGCityPins::ParkTrees, PCGCityPins::ParkBushes }; }
+
+bool UPCGCityParkVegetationSettings::RunLayer(FPCGContext* Context, const FCityParams& Params) const
+{
+	const TArray<FCityPiece> Parks = ReadPieces(Context, PCGCityPins::Parks);
+	TArray<FCityPiece> Lawns;
+	TArray<FCityPiece> Trees;
+	TArray<FCityPiece> Bushes;
+	CityLayout::BuildParkVegetation(Params, Parks, Context->GetSeed(), Lawns, Trees, Bushes);
+
+	WritePieces(Context, PCGCityPins::Lawns, Lawns, ECityAttributes::BlockID);
+	WritePieces(Context, PCGCityPins::ParkTrees, Trees, ECityAttributes::BlockID);
+	WritePieces(Context, PCGCityPins::ParkBushes, Bushes, ECityAttributes::BlockID);
 	return true;
 }
 
