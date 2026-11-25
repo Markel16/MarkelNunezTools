@@ -13,6 +13,7 @@
 #include "FileHelpers.h"
 #include "Helpers/PCGGraphParametersHelpers.h"
 #include "Materials/MaterialInstanceConstant.h"
+#include "MeshSelectors/PCGMeshSelectorByAttribute.h"
 #include "MeshSelectors/PCGMeshSelectorWeighted.h"
 #include "Misc/PackageName.h"
 #include "PCGComponent.h"
@@ -52,6 +53,7 @@ namespace CityTool
 	{
 		FName Name;
 		double Default;
+		bool bIsBool = false;
 	};
 	const FGraphParameter GraphParameters[] = {
 		{ TEXT("CitySize"), 40000.0 },
@@ -62,6 +64,15 @@ namespace CityTool
 		{ TEXT("ParkRatio"), 0.15 },
 		{ TEXT("ParkTreeDensity"), 0.6 },
 		{ TEXT("VegetationScaleVariation"), 0.4 },
+		{ TEXT("ParkingOccupancy"), 0.7 },
+		{ TEXT("ParkingClearance"), 500.0 },
+		{ TEXT("CarVariation"), 0.7 },
+		{ TEXT("StopSigns"), 1.0, true },
+		{ TEXT("YieldSigns"), 1.0, true },
+		{ TEXT("DirectionSigns"), 1.0, true },
+		{ TEXT("SpeedLimitSigns"), 1.0, true },
+		{ TEXT("SignDistance"), 400.0 },
+		{ TEXT("SignSpacing"), 3000.0 },
 	};
 
 	UWorld* GetEditorWorld()
@@ -220,7 +231,8 @@ namespace CityTool
 		const TSet<FName> CityLabels = {
 			PCGCityPins::Params, PCGCityPins::Crossings, PCGCityPins::Streets, PCGCityPins::Blocks, PCGCityPins::Lots,
 			PCGCityPins::Built, PCGCityPins::Buildings, PCGCityPins::Lamps, PCGCityPins::Trees, PCGCityPins::Buildable,
-			PCGCityPins::Parks, PCGCityPins::Lawns, PCGCityPins::ParkTrees, PCGCityPins::ParkBushes };
+			PCGCityPins::Parks, PCGCityPins::Lawns, PCGCityPins::ParkTrees, PCGCityPins::ParkBushes,
+			PCGCityPins::Crosswalks, PCGCityPins::CrosswalkStripes, PCGCityPins::Entrances, PCGCityPins::Cars, PCGCityPins::Signs };
 
 		TArray<FName> InputLabels;
 		for (const UPCGPin* Pin : Node->GetInputPins())
@@ -279,6 +291,21 @@ namespace CityTool
 		return AddMeshSpawner(Builder, MakeArrayView(&MeshPath, 1), Material, X, Y);
 	}
 
+	// Spawns whatever mesh and material each point names in its Mesh and Material attributes (the cars).
+	UPCGNode* AddAttributeMeshSpawner(FGraphBuilder& Builder, const int32 X, const int32 Y)
+	{
+		UPCGStaticMeshSpawnerSettings* Settings = nullptr;
+		UPCGNode* Node = Builder.Add(Settings, X, Y);
+		Settings->SetMeshSelectorType(UPCGMeshSelectorByAttribute::StaticClass());
+		if (UPCGMeshSelectorByAttribute* Selector = Cast<UPCGMeshSelectorByAttribute>(Settings->MeshSelectorParameters))
+		{
+			Selector->AttributeName = PCGCityAssets::MeshAttribute;
+			Selector->bUseAttributeMaterialOverrides = true;
+			Selector->MaterialOverrideAttributes = { PCGCityAssets::MaterialAttribute };
+		}
+		return Node;
+	}
+
 	// Datos primero, mallas al final: the only subgraph that turns points into meshes.
 	UPCGGraph* BuildSpawnSubgraph(TArray<UPackage*>& OutPackages, bool& bInOutSucceeded)
 	{
@@ -287,13 +314,22 @@ namespace CityTool
 		UMaterialInterface* BuildingMaterial = BuildMaterial(TEXT("MI_CityBuilding"), FLinearColor(0.55f, 0.42f, 0.3f), OutPackages);
 		UMaterialInterface* LampMaterial = BuildMaterial(TEXT("MI_CityLamp"), FLinearColor(0.05f, 0.05f, 0.05f), OutPackages);
 		UMaterialInterface* GrassMaterial = BuildMaterial(TEXT("MI_CityGrass"), FLinearColor(0.08f, 0.25f, 0.05f), OutPackages);
+		UMaterialInterface* CrosswalkMaterial = BuildMaterial(TEXT("MI_CityCrosswalk"), FLinearColor(0.9f, 0.9f, 0.9f), OutPackages);
+		UMaterialInterface* NoParkingMaterial = BuildMaterial(TEXT("MI_CityNoParking"), FLinearColor(0.9f, 0.65f, 0.02f), OutPackages);
+
+		// The car points name these materials in their Material attribute.
+		for (const TPair<FName, FLinearColor>& Look : CityLayout::GetLooks())
+		{
+			BuildMaterial(PCGCityAssets::GetLookMaterialName(Look.Key), Look.Value, OutPackages);
+		}
 
 		UPCGGraph* Graph = LoadOrCreateCityAsset<UPCGGraph>(TEXT("SG_CitySpawn"), OutPackages);
 		ClearGraph(Graph);
 
 		const TArray<FName> InputLabels = {
 			PCGCityPins::Streets, PCGCityPins::Crossings, PCGCityPins::Blocks, PCGCityPins::Buildings, PCGCityPins::Lamps, PCGCityPins::Trees,
-			PCGCityPins::Lawns, PCGCityPins::ParkTrees, PCGCityPins::ParkBushes };
+			PCGCityPins::Lawns, PCGCityPins::ParkTrees, PCGCityPins::ParkBushes, PCGCityPins::CrosswalkStripes, PCGCityPins::Entrances,
+			PCGCityPins::Cars, PCGCityPins::Signs };
 		SetGraphPins(Graph->GetInputNode(), InputLabels);
 		SetGraphPins(Graph->GetOutputNode(), {});
 		Graph->GetInputNode()->SetNodePosition(-400, 0);
@@ -314,6 +350,10 @@ namespace CityTool
 		Builder.Connect(Input, PCGCityPins::Lawns, AddMeshSpawner(Builder, CubeMeshPath, GrassMaterial, 200, 700), In);
 		Builder.Connect(Input, PCGCityPins::ParkTrees, AddMeshSpawner(Builder, ParkTreeMeshPaths, nullptr, 200, 900), In);
 		Builder.Connect(Input, PCGCityPins::ParkBushes, AddMeshSpawner(Builder, BushMeshPath, nullptr, 200, 1100), In);
+		Builder.Connect(Input, PCGCityPins::CrosswalkStripes, AddMeshSpawner(Builder, CubeMeshPath, CrosswalkMaterial, 200, 1300), In);
+		Builder.Connect(Input, PCGCityPins::Entrances, AddMeshSpawner(Builder, CubeMeshPath, NoParkingMaterial, 200, 1500), In);
+		Builder.Connect(Input, PCGCityPins::Cars, AddAttributeMeshSpawner(Builder, 200, 1700), In);
+		Builder.Connect(Input, PCGCityPins::Signs, AddAttributeMeshSpawner(Builder, 200, 1900), In);
 
 		bInOutSucceeded &= Builder.Succeeded();
 		return Graph;
@@ -327,7 +367,7 @@ namespace CityTool
 		{
 			if (!Existing || !Existing->FindPropertyDescByName(Parameter.Name))
 			{
-				Missing.Emplace(Parameter.Name, EPropertyBagPropertyType::Double);
+				Missing.Emplace(Parameter.Name, Parameter.bIsBool ? EPropertyBagPropertyType::Bool : EPropertyBagPropertyType::Double);
 			}
 		}
 
@@ -336,7 +376,14 @@ namespace CityTool
 			Graph->AddUserParameters(Missing);
 			for (const FGraphParameter& Parameter : GraphParameters)
 			{
-				UPCGGraphParametersHelpers::SetDoubleParameter(Graph, Parameter.Name, Parameter.Default);
+				if (Parameter.bIsBool)
+				{
+					UPCGGraphParametersHelpers::SetBoolParameter(Graph, Parameter.Name, Parameter.Default != 0.0);
+				}
+				else
+				{
+					UPCGGraphParametersHelpers::SetDoubleParameter(Graph, Parameter.Name, Parameter.Default);
+				}
 			}
 		}
 	}
@@ -353,7 +400,7 @@ namespace CityTool
 		return nullptr;
 	}
 
-	FCityParams MakeParams(const double CitySizeMeters, const double BlockSizeMeters, const double BuildingDensity, const double BuildingHeightMeters, const double BuildingVariation, const double ParkRatio, const double ParkTreeDensity, const double VegetationScaleVariation)
+	FCityParams MakeParams(const double CitySizeMeters, const double BlockSizeMeters, const double BuildingDensity, const double BuildingHeightMeters, const double BuildingVariation, const double ParkRatio, const double ParkTreeDensity, const double VegetationScaleVariation, const double ParkingOccupancy, const double ParkingClearanceMeters, const double CarVariation, const bool bStopSigns, const bool bYieldSigns, const bool bDirectionSigns, const bool bSpeedLimitSigns, const double SignDistanceMeters, const double SignSpacingMeters)
 	{
 		FCityParams Params;
 		Params.CitySize = CitySizeMeters * MetersToCm;
@@ -364,6 +411,15 @@ namespace CityTool
 		Params.ParkRatio = ParkRatio;
 		Params.ParkTreeDensity = ParkTreeDensity;
 		Params.VegetationScaleVariation = VegetationScaleVariation;
+		Params.ParkingOccupancy = ParkingOccupancy;
+		Params.ParkingClearance = ParkingClearanceMeters * MetersToCm;
+		Params.CarVariation = CarVariation;
+		Params.bStopSigns = bStopSigns;
+		Params.bYieldSigns = bYieldSigns;
+		Params.bDirectionSigns = bDirectionSigns;
+		Params.bSpeedLimitSigns = bSpeedLimitSigns;
+		Params.SignDistance = SignDistanceMeters * MetersToCm;
+		Params.SignSpacing = SignSpacingMeters * MetersToCm;
 		return Params;
 	}
 }
@@ -386,6 +442,10 @@ bool UCityToolLibrary::BuildCityGraphs()
 	UPCGGraph* BuildingsGraph = BuildLayerSubgraph<UPCGCityBuildingsSettings>(TEXT("SG_CityBuildings"), Packages, bSucceeded);
 	UPCGGraph* PropsGraph = BuildLayerSubgraph<UPCGCityPropsSettings>(TEXT("SG_CityProps"), Packages, bSucceeded);
 	UPCGGraph* OverlapsGraph = BuildLayerSubgraph<UPCGCityOverlapsSettings>(TEXT("SG_CityOverlaps"), Packages, bSucceeded);
+	UPCGGraph* CrosswalksGraph = BuildLayerSubgraph<UPCGCityCrosswalksSettings>(TEXT("SG_CityCrosswalks"), Packages, bSucceeded);
+	UPCGGraph* EntrancesGraph = BuildLayerSubgraph<UPCGCityEntrancesSettings>(TEXT("SG_CityEntrances"), Packages, bSucceeded);
+	UPCGGraph* ParkingGraph = BuildLayerSubgraph<UPCGCityParkingSettings>(TEXT("SG_CityParking"), Packages, bSucceeded);
+	UPCGGraph* SignsGraph = BuildLayerSubgraph<UPCGCitySignsSettings>(TEXT("SG_CitySigns"), Packages, bSucceeded);
 	UPCGGraph* SpawnGraph = BuildSpawnSubgraph(Packages, bSucceeded);
 
 	// Main graph: it only wires the systems together.
@@ -424,14 +484,18 @@ bool UCityToolLibrary::BuildCityGraphs()
 	UPCGNode* Buildings = Builder.AddSubgraph(BuildingsGraph, 2100, -100);
 	UPCGNode* Props = Builder.AddSubgraph(PropsGraph, 1300, 250);
 	UPCGNode* Overlaps = Builder.AddSubgraph(OverlapsGraph, 2500, -200);
-	UPCGNode* Spawn = Builder.AddSubgraph(SpawnGraph, 3000, -200);
+	UPCGNode* Crosswalks = Builder.AddSubgraph(CrosswalksGraph, 900, -500);
+	UPCGNode* Entrances = Builder.AddSubgraph(EntrancesGraph, 2900, 100);
+	UPCGNode* Parking = Builder.AddSubgraph(ParkingGraph, 3300, 100);
+	UPCGNode* Signs = Builder.AddSubgraph(SignsGraph, 3300, 450);
+	UPCGNode* Spawn = Builder.AddSubgraph(SpawnGraph, 3800, -200);
 
-	for (UPCGNode* Layer : { Grid, Streets, Blocks, Parks, ParkVegetation, Lots, Density, Buildings, Props, Overlaps })
+	for (UPCGNode* Layer : { Grid, Streets, Blocks, Parks, ParkVegetation, Lots, Density, Buildings, Props, Overlaps, Crosswalks, Entrances, Parking, Signs })
 	{
 		Builder.Connect(Params, PCGCityPins::Params, Layer, PCGCityPins::Params);
 	}
 
-	for (UPCGNode* Consumer : { Streets, Blocks, Props, Overlaps, Spawn })
+	for (UPCGNode* Consumer : { Streets, Blocks, Props, Overlaps, Parking, Signs, Spawn })
 	{
 		Builder.Connect(Grid, PCGCityPins::Crossings, Consumer, PCGCityPins::Crossings);
 	}
@@ -457,6 +521,25 @@ bool UCityToolLibrary::BuildCityGraphs()
 		Builder.Connect(Overlaps, Label, Spawn, Label);
 	}
 
+	// Parked cars: crosswalks and entrances are the forbidden zones the parking layer avoids.
+	Builder.Connect(Streets, PCGCityPins::Streets, Crosswalks, PCGCityPins::Streets);
+	Builder.Connect(Overlaps, PCGCityPins::Buildings, Entrances, PCGCityPins::Buildings);
+	Builder.Connect(Blocks, PCGCityPins::Blocks, Entrances, PCGCityPins::Blocks);
+	Builder.Connect(Streets, PCGCityPins::Streets, Parking, PCGCityPins::Streets);
+	Builder.Connect(Blocks, PCGCityPins::Blocks, Parking, PCGCityPins::Blocks);
+	Builder.Connect(Crosswalks, PCGCityPins::Crosswalks, Parking, PCGCityPins::Crosswalks);
+	Builder.Connect(Entrances, PCGCityPins::Entrances, Parking, PCGCityPins::Entrances);
+	Builder.Connect(Crosswalks, PCGCityPins::CrosswalkStripes, Spawn, PCGCityPins::CrosswalkStripes);
+	Builder.Connect(Entrances, PCGCityPins::Entrances, Spawn, PCGCityPins::Entrances);
+	Builder.Connect(Parking, PCGCityPins::Cars, Spawn, PCGCityPins::Cars);
+
+	// Traffic signs: on the sidewalks, clear of the final lamps and trees.
+	Builder.Connect(Streets, PCGCityPins::Streets, Signs, PCGCityPins::Streets);
+	Builder.Connect(Blocks, PCGCityPins::Blocks, Signs, PCGCityPins::Blocks);
+	Builder.Connect(Overlaps, PCGCityPins::Lamps, Signs, PCGCityPins::Lamps);
+	Builder.Connect(Overlaps, PCGCityPins::Trees, Signs, PCGCityPins::Trees);
+	Builder.Connect(Signs, PCGCityPins::Signs, Spawn, PCGCityPins::Signs);
+
 	bSucceeded &= Builder.Succeeded();
 	UEditorLoadingAndSavingUtils::SavePackages(Packages, /*bOnlyDirty=*/false);
 
@@ -473,11 +556,20 @@ bool UCityToolLibrary::GenerateCity(
 	const double ParkRatio,
 	const double ParkTreeDensity,
 	const double VegetationScaleVariation,
+	const double ParkingOccupancy,
+	const double ParkingClearanceMeters,
+	const double CarVariation,
+	const bool bStopSigns,
+	const bool bYieldSigns,
+	const bool bDirectionSigns,
+	const bool bSpeedLimitSigns,
+	const double SignDistanceMeters,
+	const double SignSpacingMeters,
 	const int32 Seed)
 {
 	using namespace CityTool;
 
-	const FCityParams Params = MakeParams(CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation);
+	const FCityParams Params = MakeParams(CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation, ParkingOccupancy, ParkingClearanceMeters, CarVariation, bStopSigns, bYieldSigns, bDirectionSigns, bSpeedLimitSigns, SignDistanceMeters, SignSpacingMeters);
 	FString Error;
 	if (!Params.IsValid(&Error))
 	{
@@ -543,6 +635,15 @@ bool UCityToolLibrary::GenerateCity(
 	UPCGGraphParametersHelpers::SetDoubleParameter(GraphInstance, TEXT("ParkRatio"), Params.ParkRatio);
 	UPCGGraphParametersHelpers::SetDoubleParameter(GraphInstance, TEXT("ParkTreeDensity"), Params.ParkTreeDensity);
 	UPCGGraphParametersHelpers::SetDoubleParameter(GraphInstance, TEXT("VegetationScaleVariation"), Params.VegetationScaleVariation);
+	UPCGGraphParametersHelpers::SetDoubleParameter(GraphInstance, TEXT("ParkingOccupancy"), Params.ParkingOccupancy);
+	UPCGGraphParametersHelpers::SetDoubleParameter(GraphInstance, TEXT("ParkingClearance"), Params.ParkingClearance);
+	UPCGGraphParametersHelpers::SetDoubleParameter(GraphInstance, TEXT("CarVariation"), Params.CarVariation);
+	UPCGGraphParametersHelpers::SetBoolParameter(GraphInstance, TEXT("StopSigns"), Params.bStopSigns);
+	UPCGGraphParametersHelpers::SetBoolParameter(GraphInstance, TEXT("YieldSigns"), Params.bYieldSigns);
+	UPCGGraphParametersHelpers::SetBoolParameter(GraphInstance, TEXT("DirectionSigns"), Params.bDirectionSigns);
+	UPCGGraphParametersHelpers::SetBoolParameter(GraphInstance, TEXT("SpeedLimitSigns"), Params.bSpeedLimitSigns);
+	UPCGGraphParametersHelpers::SetDoubleParameter(GraphInstance, TEXT("SignDistance"), Params.SignDistance);
+	UPCGGraphParametersHelpers::SetDoubleParameter(GraphInstance, TEXT("SignSpacing"), Params.SignSpacing);
 	PCGComponent->Seed = Seed;
 	PCGComponent->Generate(true);
 	return true;
@@ -591,9 +692,18 @@ bool UCityToolLibrary::TestDeterminism(
 	const double BuildingVariation,
 	const double ParkRatio,
 	const double ParkTreeDensity,
-	const double VegetationScaleVariation)
+	const double VegetationScaleVariation,
+	const double ParkingOccupancy,
+	const double ParkingClearanceMeters,
+	const double CarVariation,
+	const bool bStopSigns,
+	const bool bYieldSigns,
+	const bool bDirectionSigns,
+	const bool bSpeedLimitSigns,
+	const double SignDistanceMeters,
+	const double SignSpacingMeters)
 {
-	const FCityParams Params = CityTool::MakeParams(CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation);
+	const FCityParams Params = CityTool::MakeParams(CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation, ParkingOccupancy, ParkingClearanceMeters, CarVariation, bStopSigns, bYieldSigns, bDirectionSigns, bSpeedLimitSigns, SignDistanceMeters, SignSpacingMeters);
 	FString Error;
 	if (!Params.IsValid(&Error))
 	{
@@ -607,9 +717,9 @@ bool UCityToolLibrary::TestDeterminism(
 
 	const bool bSameSeedMatches = CityLayout::AreEqual(First, Second);
 	const bool bNewSeedDiffers = !CityLayout::AreEqual(First, Other);
-	Report = FString::Printf(TEXT("Seed 7 twice: %s (%d buildings, %d lamps, %d trees). Seed 8: %s (%d buildings)."),
+	Report = FString::Printf(TEXT("Seed 7 twice: %s (%d buildings, %d lamps, %d trees, %d parks, %d cars, %d signs). Seed 8: %s (%d buildings)."),
 		bSameSeedMatches ? TEXT("same city") : TEXT("DIFFERENT city"),
-		First.Buildings.Num(), First.Lamps.Num(), First.Trees.Num(),
+		First.Buildings.Num(), First.Lamps.Num(), First.Trees.Num(), First.Parks.Num(), First.Cars.Num(), First.Signs.Num(),
 		bNewSeedDiffers ? TEXT("different city") : TEXT("SAME city"),
 		Other.Buildings.Num());
 

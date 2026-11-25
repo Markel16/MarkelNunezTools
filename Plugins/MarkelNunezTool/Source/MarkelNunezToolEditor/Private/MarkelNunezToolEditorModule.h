@@ -52,6 +52,15 @@ private:
 	double ParkRatio = 0.15;
 	double ParkTreeDensity = 0.6;
 	double VegetationScaleVariation = 0.4;
+	double ParkingOccupancy = 0.7;
+	double ParkingClearanceMeters = 5.0;
+	double CarVariation = 0.7;
+	bool bStopSigns = true;
+	bool bYieldSigns = true;
+	bool bDirectionSigns = true;
+	bool bSpeedLimitSigns = true;
+	double SignDistanceMeters = 4.0;
+	double SignSpacingMeters = 30.0;
 	int32 CitySeed = 1234;
 	FText CityStatus;
 

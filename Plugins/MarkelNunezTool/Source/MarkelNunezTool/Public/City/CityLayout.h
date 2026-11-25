@@ -7,6 +7,22 @@
 // Pure C++ version of the city algorithm from the PCG guide. The PCG nodes in PCGCityNodes.h call these
 // functions one layer at a time, and the automation tests call them directly. All distances are in cm.
 
+// Engine basic shape a piece is drawn with when its mesh comes from an attribute (cars, signs).
+enum class ECityShape : uint8
+{
+	Cube,
+	Cylinder,
+	Cone,
+};
+
+enum class ECitySignType : int32
+{
+	Stop,
+	Yield,
+	Direction,
+	SpeedLimit,
+};
+
 struct MARKELNUNEZTOOL_API FCityParams
 {
 	// Values the tool sends.
@@ -21,6 +37,21 @@ struct MARKELNUNEZTOOL_API FCityParams
 	double ParkRatio = 0.15;
 	double ParkTreeDensity = 0.6;
 	double VegetationScaleVariation = 0.4;
+
+	// Parked cars (improvement): share of free curb slots with a car, minimum distance (cm) from a car to
+	// crossings and crosswalks, and how many models and colors are used (0 = all cars identical).
+	double ParkingOccupancy = 0.7;
+	double ParkingClearance = 500.0;
+	double CarVariation = 0.7;
+
+	// Traffic signs (improvement): which types are placed, how far before the intersection (cm),
+	// and the spacing (cm) of speed limit signs along each street segment (0 = none).
+	bool bStopSigns = true;
+	bool bYieldSigns = true;
+	bool bDirectionSigns = true;
+	bool bSpeedLimitSigns = true;
+	double SignDistance = 400.0;
+	double SignSpacing = 3000.0;
 
 	// Internal constants.
 	double StreetWidth = 800.0;
@@ -46,6 +77,26 @@ struct MARKELNUNEZTOOL_API FCityParams
 	double ParkBushScale = 0.8;
 	double ParkBushSizeLocal = 220.0;
 
+	// Street markings and parking.
+	double MarkingThickness = 2.0;
+	double CrosswalkLength = 300.0;
+	double CrosswalkStripePitch = 100.0;
+	double CrosswalkStripeWidth = 50.0;
+	double EntranceWidth = 400.0;
+	double ParkingLaneWidth = 220.0;
+	double CarSlotLength = 600.0;
+	double CarLift = 20.0;
+	double WheelSize = 60.0;
+	double WheelWidth = 25.0;
+
+	// Traffic signs. Every MajorStreetEvery-th row and column is a main street.
+	int32 MajorStreetEvery = 3;
+	double SignCurbOffset = 50.0;
+	double SignPoleHeight = 230.0;
+	double SignPoleRadius = 4.0;
+	double SignPropClearance = 80.0;
+	double DirectionSignSetback = 500.0;
+
 	double Cell() const { return BlockSize + StreetWidth; }
 	int32 CrossingsPerSide() const;
 	bool IsValid(FString* OutError = nullptr) const;
@@ -56,6 +107,8 @@ struct MARKELNUNEZTOOL_API FCityPiece
 {
 	FVector Location = FVector::ZeroVector;
 	double Yaw = 0.0;
+	double Pitch = 0.0;
+	double Roll = 0.0;
 	FVector Scale = FVector::OneVector;
 	FBox LocalBounds = FBox(FVector(-50.0), FVector(50.0));
 	int32 Seed = 0;
@@ -67,6 +120,15 @@ struct MARKELNUNEZTOOL_API FCityPiece
 	bool bFrontage = false;
 	FVector BlockCenter = FVector::ZeroVector;
 	double Height = 0.0;
+
+	// Parked cars: which model the piece belongs to and its color (INDEX_NONE for tires).
+	int32 ModelIndex = INDEX_NONE;
+	int32 ColorIndex = INDEX_NONE;
+
+	// Pieces drawn from attributes (cars, signs): the shape and the material key, see CityLayout::GetLooks().
+	ECityShape Shape = ECityShape::Cube;
+	FName Look;
+	int32 SignType = INDEX_NONE;
 
 	// Box sized for the engine's 100 cm basic shapes, which have their pivot at the center.
 	static FCityPiece MakeBox(const FVector& Center, const FVector& Size, double Yaw = 0.0);
@@ -91,6 +153,13 @@ struct MARKELNUNEZTOOL_API FCityLayout
 	TArray<FCityPiece> Buildings;
 	TArray<FCityPiece> Lamps;
 	TArray<FCityPiece> Trees;
+	TArray<FCityPiece> Crosswalks;
+	TArray<FCityPiece> CrosswalkStripes;
+	TArray<FCityPiece> Entrances;
+	TArray<FCityPiece> Cars;
+	TArray<FCityPiece> CarParts;
+	TArray<FCityPiece> Signs;
+	TArray<FCityPiece> SignParts;
 };
 
 struct MARKELNUNEZTOOL_API FCityOverlapReport
@@ -138,6 +207,33 @@ namespace CityLayout
 	// Step 10: removes buildings and props on the road, props inside buildings and overlapping buildings,
 	// then checks every layer.
 	MARKELNUNEZTOOL_API FCityOverlapReport CleanOverlaps(const FCityParams& Params, TConstArrayView<FCityPiece> Streets, TConstArrayView<FCityPiece> Crossings, TArray<FCityPiece>& InOutBuildings, TArray<FCityPiece>& InOutLamps, TArray<FCityPiece>& InOutTrees);
+
+	// Parking: a crosswalk zone at each end of every street segment, plus the zebra stripes to draw it.
+	MARKELNUNEZTOOL_API void BuildCrosswalks(const FCityParams& Params, TConstArrayView<FCityPiece> Streets, TArray<FCityPiece>& OutZones, TArray<FCityPiece>& OutStripes);
+
+	// Parking: one entrance in the curb lane in front of each building, on the side the building faces.
+	MARKELNUNEZTOOL_API TArray<FCityPiece> BuildEntrances(const FCityParams& Params, TConstArrayView<FCityPiece> Buildings, TConstArrayView<FCityPiece> Blocks);
+
+	// Parking: slots along the curb of every street, aligned with it, skipping any slot closer than
+	// ParkingClearance to a crossing or crosswalk or touching an entrance; ParkingOccupancy of the rest get a car.
+	// OutCars holds one body per car (for tests and overlap checks), OutParts the cabins and wheels.
+	MARKELNUNEZTOOL_API void BuildParkedCars(const FCityParams& Params, TConstArrayView<FCityPiece> Streets, TConstArrayView<FCityPiece> Crossings, TConstArrayView<FCityPiece> Blocks, TConstArrayView<FCityPiece> Crosswalks, TConstArrayView<FCityPiece> Entrances, int32 Seed, TArray<FCityPiece>& OutCars, TArray<FCityPiece>& OutParts);
+
+	// Car body colors, indexed by FCityPiece::ColorIndex.
+	MARKELNUNEZTOOL_API TConstArrayView<FLinearColor> GetCarPalette();
+	MARKELNUNEZTOOL_API int32 GetCarModelCount();
+
+	// Every material key a piece's Look can name, with its color. The graph builder makes one material per entry.
+	MARKELNUNEZTOOL_API TConstArrayView<TPair<FName, FLinearColor>> GetLooks();
+
+	// Main streets get priority at intersections; rows and columns are those of the crossings grid.
+	MARKELNUNEZTOOL_API bool IsMajorStreet(const FCityParams& Params, int32 RowOrCol);
+
+	// Traffic signs on the sidewalk, on the driver's right, facing the traffic they address:
+	// stop or yield before intersections depending on which street has priority, direction signs where two
+	// main streets cross, and speed limits every SignSpacing along each segment. Signs move along the curb
+	// to stay clear of lamps and trees. OutSigns holds one pole per sign (with SignType), OutParts the panels.
+	MARKELNUNEZTOOL_API void BuildSigns(const FCityParams& Params, TConstArrayView<FCityPiece> Streets, TConstArrayView<FCityPiece> Crossings, TConstArrayView<FCityPiece> Blocks, TConstArrayView<FCityPiece> Lamps, TConstArrayView<FCityPiece> Trees, TArray<FCityPiece>& OutSigns, TArray<FCityPiece>& OutParts);
 
 	// Runs every step in order. Used by the tests and the determinism check.
 	MARKELNUNEZTOOL_API FCityLayout Generate(const FCityParams& Params, const FVector& Origin, int32 Seed, FCityOverlapReport* OutReport = nullptr);

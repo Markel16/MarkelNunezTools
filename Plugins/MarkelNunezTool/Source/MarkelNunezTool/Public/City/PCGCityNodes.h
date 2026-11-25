@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "City/CityLayout.h"
 #include "PCGSettings.h"
 #include "PCGCityNodes.generated.h"
 
@@ -26,6 +27,23 @@ namespace PCGCityPins
 	MARKELNUNEZTOOL_API extern const FName Lawns;
 	MARKELNUNEZTOOL_API extern const FName ParkTrees;
 	MARKELNUNEZTOOL_API extern const FName ParkBushes;
+	MARKELNUNEZTOOL_API extern const FName Crosswalks;
+	MARKELNUNEZTOOL_API extern const FName CrosswalkStripes;
+	MARKELNUNEZTOOL_API extern const FName Entrances;
+	MARKELNUNEZTOOL_API extern const FName Cars;
+	MARKELNUNEZTOOL_API extern const FName Signs;
+}
+
+// Assets the car and sign points name in their Mesh and Material attributes. The graph builder creates the materials.
+namespace PCGCityAssets
+{
+	MARKELNUNEZTOOL_API extern const TCHAR* const CityFolder;
+	MARKELNUNEZTOOL_API extern const FName MeshAttribute;
+	MARKELNUNEZTOOL_API extern const FName MaterialAttribute;
+
+	MARKELNUNEZTOOL_API FString GetLookMaterialName(FName Look);
+	MARKELNUNEZTOOL_API FSoftObjectPath GetShapeMeshPath(ECityShape Shape);
+	MARKELNUNEZTOOL_API FSoftObjectPath GetMaterialPath(const FString& AssetName);
 }
 
 // Gathers the city parameters into one Attribute Set that travels to every layer on the Params pin.
@@ -71,6 +89,38 @@ public:
 	// 0 = every plant the same size, 1 = from half to one and a half times the base size.
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Parks", meta = (PCG_Overridable, ClampMin = "0", ClampMax = "1"))
 	double VegetationScaleVariation = 0.4;
+
+	// Share of the legal curb slots that get a parked car.
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Parking", meta = (PCG_Overridable, ClampMin = "0", ClampMax = "1"))
+	double ParkingOccupancy = 0.7;
+
+	// Minimum distance in cm from a parked car to any crossing or crosswalk.
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Parking", meta = (PCG_Overridable, ClampMin = "0"))
+	double ParkingClearance = 500.0;
+
+	// 0 = every car the same model and color, 1 = all models and colors.
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Parking", meta = (PCG_Overridable, ClampMin = "0", ClampMax = "1"))
+	double CarVariation = 0.7;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Signs", meta = (PCG_Overridable))
+	bool StopSigns = true;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Signs", meta = (PCG_Overridable))
+	bool YieldSigns = true;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Signs", meta = (PCG_Overridable))
+	bool DirectionSigns = true;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Signs", meta = (PCG_Overridable))
+	bool SpeedLimitSigns = true;
+
+	// Distance in cm from the edge of the intersection to the stop, yield and direction signs.
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Signs", meta = (PCG_Overridable, ClampMin = "0"))
+	double SignDistance = 400.0;
+
+	// One speed limit sign every SignSpacing cm along each street segment; 0 places none.
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Signs", meta = (PCG_Overridable, ClampMin = "0"))
+	double SignSpacing = 3000.0;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Constants", meta = (PCG_Overridable, ClampMin = "1"))
 	double StreetWidth = 800.0;
@@ -306,6 +356,82 @@ public:
 	virtual FName GetDefaultNodeName() const override { return TEXT("CityParkVegetation"); }
 	virtual FText GetDefaultNodeTitle() const override { return NSLOCTEXT("PCGCity", "ParkVegetationTitle", "City Park Vegetation"); }
 	virtual FText GetNodeTooltipText() const override { return NSLOCTEXT("PCGCity", "ParkVegetationTooltip", "Parks: a lawn in each park and trees or bushes scattered over a grid of cells."); }
+#endif
+
+	virtual bool RunLayer(FPCGContext* Context, const FCityParams& Params) const override;
+
+protected:
+	virtual TArray<FName> GetInputLabels() const override;
+	virtual TArray<FName> GetOutputLabels() const override;
+};
+
+UCLASS(BlueprintType, ClassGroup = (Procedural))
+class MARKELNUNEZTOOL_API UPCGCityCrosswalksSettings : public UPCGCityLayerSettings
+{
+	GENERATED_BODY()
+
+public:
+#if WITH_EDITOR
+	virtual FName GetDefaultNodeName() const override { return TEXT("CityCrosswalks"); }
+	virtual FText GetDefaultNodeTitle() const override { return NSLOCTEXT("PCGCity", "CrosswalksTitle", "City Crosswalks"); }
+	virtual FText GetNodeTooltipText() const override { return NSLOCTEXT("PCGCity", "CrosswalksTooltip", "Parking: a crosswalk zone and its zebra stripes at each end of every street."); }
+#endif
+
+	virtual bool RunLayer(FPCGContext* Context, const FCityParams& Params) const override;
+
+protected:
+	virtual TArray<FName> GetInputLabels() const override;
+	virtual TArray<FName> GetOutputLabels() const override;
+};
+
+UCLASS(BlueprintType, ClassGroup = (Procedural))
+class MARKELNUNEZTOOL_API UPCGCityEntrancesSettings : public UPCGCityLayerSettings
+{
+	GENERATED_BODY()
+
+public:
+#if WITH_EDITOR
+	virtual FName GetDefaultNodeName() const override { return TEXT("CityEntrances"); }
+	virtual FText GetDefaultNodeTitle() const override { return NSLOCTEXT("PCGCity", "EntrancesTitle", "City Entrances"); }
+	virtual FText GetNodeTooltipText() const override { return NSLOCTEXT("PCGCity", "EntrancesTooltip", "Parking: a no-parking entrance in the curb lane in front of each building."); }
+#endif
+
+	virtual bool RunLayer(FPCGContext* Context, const FCityParams& Params) const override;
+
+protected:
+	virtual TArray<FName> GetInputLabels() const override;
+	virtual TArray<FName> GetOutputLabels() const override;
+};
+
+UCLASS(BlueprintType, ClassGroup = (Procedural))
+class MARKELNUNEZTOOL_API UPCGCityParkingSettings : public UPCGCityLayerSettings
+{
+	GENERATED_BODY()
+
+public:
+#if WITH_EDITOR
+	virtual FName GetDefaultNodeName() const override { return TEXT("CityParking"); }
+	virtual FText GetDefaultNodeTitle() const override { return NSLOCTEXT("PCGCity", "ParkingTitle", "City Parking"); }
+	virtual FText GetNodeTooltipText() const override { return NSLOCTEXT("PCGCity", "ParkingTooltip", "Parking: cars along the curb, aligned with the street, away from crossings, crosswalks and entrances."); }
+#endif
+
+	virtual bool RunLayer(FPCGContext* Context, const FCityParams& Params) const override;
+
+protected:
+	virtual TArray<FName> GetInputLabels() const override;
+	virtual TArray<FName> GetOutputLabels() const override;
+};
+
+UCLASS(BlueprintType, ClassGroup = (Procedural))
+class MARKELNUNEZTOOL_API UPCGCitySignsSettings : public UPCGCityLayerSettings
+{
+	GENERATED_BODY()
+
+public:
+#if WITH_EDITOR
+	virtual FName GetDefaultNodeName() const override { return TEXT("CitySigns"); }
+	virtual FText GetDefaultNodeTitle() const override { return NSLOCTEXT("PCGCity", "SignsTitle", "City Signs"); }
+	virtual FText GetNodeTooltipText() const override { return NSLOCTEXT("PCGCity", "SignsTooltip", "Signs: stop or yield before intersections, direction signs where main streets cross and speed limits along the streets, on the sidewalk facing the traffic."); }
 #endif
 
 	virtual bool RunLayer(FPCGContext* Context, const FCityParams& Params) const override;

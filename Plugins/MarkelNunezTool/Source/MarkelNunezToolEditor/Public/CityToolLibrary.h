@@ -30,6 +30,15 @@ public:
 		double ParkRatio = 0.15,
 		double ParkTreeDensity = 0.6,
 		double VegetationScaleVariation = 0.4,
+		double ParkingOccupancy = 0.7,
+		double ParkingClearanceMeters = 5.0,
+		double CarVariation = 0.7,
+		bool bStopSigns = true,
+		bool bYieldSigns = true,
+		bool bDirectionSigns = true,
+		bool bSpeedLimitSigns = true,
+		double SignDistanceMeters = 4.0,
+		double SignSpacingMeters = 30.0,
 		int32 Seed = 1234);
 
 	// Removes everything PCG generated and every actor tagged CityGenerated, including the City volume.
@@ -46,5 +55,14 @@ public:
 		double BuildingVariation = 0.5,
 		double ParkRatio = 0.15,
 		double ParkTreeDensity = 0.6,
-		double VegetationScaleVariation = 0.4);
+		double VegetationScaleVariation = 0.4,
+		double ParkingOccupancy = 0.7,
+		double ParkingClearanceMeters = 5.0,
+		double CarVariation = 0.7,
+		bool bStopSigns = true,
+		bool bYieldSigns = true,
+		bool bDirectionSigns = true,
+		bool bSpeedLimitSigns = true,
+		double SignDistanceMeters = 4.0,
+		double SignSpacingMeters = 30.0);
 };

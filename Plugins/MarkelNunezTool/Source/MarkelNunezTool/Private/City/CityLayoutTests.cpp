@@ -195,4 +195,210 @@ bool FCityLayoutParksTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCityLayoutParkingTest, "MarkelNunezTool.City.Parking", CityTestFlags)
+bool FCityLayoutParkingTest::RunTest(const FString& Parameters)
+{
+	FCityParams Params;
+	Params.ParkingOccupancy = 0.8;
+	const FCityLayout Layout = CityLayout::Generate(Params, FVector::ZeroVector, 5);
+
+	TestTrue(TEXT("Cars were parked"), Layout.Cars.Num() > 0);
+	TestTrue(TEXT("Crosswalks were generated at the ends of the streets"), Layout.Crosswalks.Num() == 2 * Layout.Streets.Num());
+	TestEqual(TEXT("Every building has an entrance"), Layout.Entrances.Num(), Layout.Buildings.Num());
+	TestEqual(TEXT("Each car has a cabin and four wheels"), Layout.CarParts.Num(), 5 * Layout.Cars.Num());
+
+	// Aligned with the street and next to the curb, inside the street.
+	bool bAllAligned = true;
+	bool bAllAtCurb = true;
+	for (const FCityPiece& Car : Layout.Cars)
+	{
+		const FBox2D Footprint = Car.GetFootprint();
+		const FCityPiece* Street = Layout.Streets.FindByPredicate([&Footprint](const FCityPiece& Candidate)
+		{
+			return Candidate.GetFootprint().IsInside(Footprint.GetCenter());
+		});
+		if (!Street)
+		{
+			bAllAtCurb = false;
+			continue;
+		}
+
+		const FVector StreetSize = Street->GetWorldBox().GetSize();
+		const bool bStreetAlongX = StreetSize.X > StreetSize.Y;
+		const double CarAxisYaw = FMath::Fmod(FMath::Abs(Car.Yaw) + 1.0, 180.0) - 1.0;
+		bAllAligned &= FMath::IsNearlyEqual(CarAxisYaw, bStreetAlongX ? 0.0 : 90.0, 0.5);
+
+		const FBox2D StreetFootprint = Street->GetFootprint();
+		const double ToCurb = bStreetAlongX
+			? FMath::Min(Footprint.Min.Y - StreetFootprint.Min.Y, StreetFootprint.Max.Y - Footprint.Max.Y)
+			: FMath::Min(Footprint.Min.X - StreetFootprint.Min.X, StreetFootprint.Max.X - Footprint.Max.X);
+		bAllAtCurb &= ToCurb >= -1.0 && ToCurb < Params.ParkingLaneWidth / 2.0;
+	}
+	TestTrue(TEXT("Cars are aligned with their street"), bAllAligned);
+	TestTrue(TEXT("Cars park inside the street, right next to the curb"), bAllAtCurb);
+
+	// Forbidden zones.
+	const auto TooClose = [&Params](const FCityPiece& Car, TConstArrayView<FCityPiece> Zones)
+	{
+		const FBox2D Cleared = Car.GetFootprint().ExpandBy(Params.ParkingClearance - 2.0);
+		return Zones.ContainsByPredicate([&Cleared](const FCityPiece& Zone) { return Zone.GetFootprint().ExpandBy(-1.0).Intersect(Cleared); });
+	};
+	TestFalse(TEXT("No car is closer than ParkingClearance to a crossing"), Layout.Cars.ContainsByPredicate([&](const FCityPiece& Car) { return TooClose(Car, Layout.Crossings); }));
+	TestFalse(TEXT("No car is closer than ParkingClearance to a crosswalk"), Layout.Cars.ContainsByPredicate([&](const FCityPiece& Car) { return TooClose(Car, Layout.Crosswalks); }));
+	TestFalse(TEXT("No car blocks an entrance"), AnyOverlap(Layout.Cars, Layout.Entrances, false));
+	TestFalse(TEXT("Cars do not overlap each other"), AnyOverlap(Layout.Cars, Layout.Cars, true));
+
+	FCityParams Empty = Params;
+	Empty.ParkingOccupancy = 0.0;
+	TestEqual(TEXT("ParkingOccupancy 0 parks no cars"), CityLayout::Generate(Empty, FVector::ZeroVector, 5).Cars.Num(), 0);
+
+	FCityParams Full = Params;
+	Full.ParkingOccupancy = 1.0;
+	TestTrue(TEXT("ParkingOccupancy 1 parks more cars"), CityLayout::Generate(Full, FVector::ZeroVector, 5).Cars.Num() > Layout.Cars.Num());
+
+	FCityParams FarFromCrossings = Params;
+	FarFromCrossings.ParkingClearance = 1500.0;
+	TestTrue(TEXT("A larger clearance leaves fewer cars"), CityLayout::Generate(FarFromCrossings, FVector::ZeroVector, 5).Cars.Num() < Layout.Cars.Num());
+
+	const auto CountLooks = [](const FCityLayout& InLayout, TSet<int32>& OutModels, TSet<int32>& OutColors)
+	{
+		for (const FCityPiece& Car : InLayout.Cars)
+		{
+			OutModels.Add(Car.ModelIndex);
+			OutColors.Add(Car.ColorIndex);
+		}
+	};
+	FCityParams Uniform = Params;
+	Uniform.CarVariation = 0.0;
+	TSet<int32> UniformModels;
+	TSet<int32> UniformColors;
+	CountLooks(CityLayout::Generate(Uniform, FVector::ZeroVector, 5), UniformModels, UniformColors);
+	TestTrue(TEXT("CarVariation 0 makes every car the same model and color"), UniformModels.Num() == 1 && UniformColors.Num() == 1);
+
+	FCityParams Varied = Params;
+	Varied.CarVariation = 1.0;
+	TSet<int32> VariedModels;
+	TSet<int32> VariedColors;
+	CountLooks(CityLayout::Generate(Varied, FVector::ZeroVector, 5), VariedModels, VariedColors);
+	TestEqual(TEXT("CarVariation 1 uses every model"), VariedModels.Num(), CityLayout::GetCarModelCount());
+	TestEqual(TEXT("CarVariation 1 uses every color"), VariedColors.Num(), CityLayout::GetCarPalette().Num());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCityLayoutSignsTest, "MarkelNunezTool.City.Signs", CityTestFlags)
+bool FCityLayoutSignsTest::RunTest(const FString& Parameters)
+{
+	const FCityParams Params;
+	const FCityLayout Layout = CityLayout::Generate(Params, FVector::ZeroVector, 9);
+
+	const auto CountType = [](const FCityLayout& InLayout, const ECitySignType Type)
+	{
+		return InLayout.Signs.FilterByPredicate([Type](const FCityPiece& Sign) { return Sign.SignType == static_cast<int32>(Type); }).Num();
+	};
+	TestTrue(TEXT("Stop signs were placed"), CountType(Layout, ECitySignType::Stop) > 0);
+	TestTrue(TEXT("Yield signs were placed"), CountType(Layout, ECitySignType::Yield) > 0);
+	TestTrue(TEXT("Direction signs were placed"), CountType(Layout, ECitySignType::Direction) > 0);
+	TestTrue(TEXT("Speed limit signs were placed"), CountType(Layout, ECitySignType::SpeedLimit) > 0);
+
+	// On the sidewalk, never on the road, and clear of lamps and trees.
+	TArray<FCityPiece> Road = Layout.Streets;
+	Road.Append(Layout.Crossings);
+	TArray<FCityPiece> AllSignPieces = Layout.Signs;
+	AllSignPieces.Append(Layout.SignParts);
+	TestFalse(TEXT("No sign piece stands on the road"), AnyOverlap(AllSignPieces, Road, false));
+	const bool bAllOnSidewalk = !Layout.Signs.ContainsByPredicate([&Layout](const FCityPiece& Sign)
+	{
+		const FVector2D Base(Sign.Location);
+		return !Layout.Blocks.ContainsByPredicate([&Base](const FCityPiece& Block) { return Block.GetFootprint().IsInside(Base); });
+	});
+	TestTrue(TEXT("Every sign stands on a sidewalk"), bAllOnSidewalk);
+	const bool bClearOfProps = !Layout.Signs.ContainsByPredicate([&Layout, &Params](const FCityPiece& Sign)
+	{
+		const auto Near = [&Sign, &Params](const FCityPiece& Prop)
+		{
+			return FVector2D::Distance(FVector2D(Prop.Location), FVector2D(Sign.Location)) < Params.SignPropClearance - 1.0;
+		};
+		return Layout.Lamps.ContainsByPredicate(Near) || Layout.Trees.ContainsByPredicate(Near);
+	});
+	TestTrue(TEXT("Signs keep clear of lamps and trees"), bClearOfProps);
+
+	// Intersection signs face the approaching traffic, stand on its right and follow the priority rules.
+	bool bFacesTraffic = true;
+	bool bOnTheRight = true;
+	bool bRightPriority = true;
+	bool bRespectsDistance = true;
+	for (const FCityPiece& Sign : Layout.Signs)
+	{
+		if (Sign.SignType == static_cast<int32>(ECitySignType::SpeedLimit))
+		{
+			continue;
+		}
+
+		const FVector2D Position(Sign.Location);
+		const FCityPiece* Crossing = nullptr;
+		for (const FCityPiece& Candidate : Layout.Crossings)
+		{
+			if (!Crossing || FVector2D::Distance(FVector2D(Candidate.Location), Position) < FVector2D::Distance(FVector2D(Crossing->Location), Position))
+			{
+				Crossing = &Candidate;
+			}
+		}
+
+		const FVector2D Facing(FMath::Cos(FMath::DegreesToRadians(Sign.Yaw)), FMath::Sin(FMath::DegreesToRadians(Sign.Yaw)));
+		const FVector2D ToSign = Position - FVector2D(Crossing->Location);
+		bFacesTraffic &= FVector2D::DotProduct(Facing, ToSign) > 0.0;
+
+		const FVector2D Drive = -Facing;
+		const FVector2D Right(Drive.Y, -Drive.X);
+		bOnTheRight &= FVector2D::DotProduct(ToSign, Right) > Params.StreetWidth / 2.0;
+
+		const double FromEdge = FMath::Abs(FVector2D::DotProduct(ToSign, Facing)) - Params.StreetWidth / 2.0;
+		const double Expected = Params.SignDistance + (Sign.SignType == static_cast<int32>(ECitySignType::Direction) ? Params.DirectionSignSetback : 0.0);
+		bRespectsDistance &= FromEdge >= Expected - 1.0;
+
+		const bool bAlongX = FMath::Abs(Facing.X) > 0.5;
+		const bool bOwnMajor = CityLayout::IsMajorStreet(Params, bAlongX ? Crossing->Row : Crossing->Col);
+		const bool bCrossMajor = CityLayout::IsMajorStreet(Params, bAlongX ? Crossing->Col : Crossing->Row);
+		if (Sign.SignType == static_cast<int32>(ECitySignType::Stop))
+		{
+			bRightPriority &= !bOwnMajor && bCrossMajor;
+		}
+		else if (Sign.SignType == static_cast<int32>(ECitySignType::Yield))
+		{
+			bRightPriority &= bOwnMajor == bCrossMajor && !bAlongX;
+		}
+		else
+		{
+			bRightPriority &= bOwnMajor && bCrossMajor;
+		}
+	}
+	TestTrue(TEXT("Intersection signs face the approaching traffic"), bFacesTraffic);
+	TestTrue(TEXT("Intersection signs stand on the driver's right"), bOnTheRight);
+	TestTrue(TEXT("Stop on minor streets at main streets, yield between equal streets, direction where main streets cross"), bRightPriority);
+	TestTrue(TEXT("Intersection signs are at least SignDistance from the intersection"), bRespectsDistance);
+
+	// Parameters.
+	FCityParams OnlySpeed = Params;
+	OnlySpeed.bStopSigns = false;
+	OnlySpeed.bYieldSigns = false;
+	OnlySpeed.bDirectionSigns = false;
+	const FCityLayout OnlySpeedLayout = CityLayout::Generate(OnlySpeed, FVector::ZeroVector, 9);
+	TestEqual(TEXT("Disabled types are not placed"), OnlySpeedLayout.Signs.Num(), CountType(OnlySpeedLayout, ECitySignType::SpeedLimit));
+
+	FCityParams NoSpeed = Params;
+	NoSpeed.SignSpacing = 0.0;
+	TestEqual(TEXT("SignSpacing 0 places no speed limits"), CountType(CityLayout::Generate(NoSpeed, FVector::ZeroVector, 9), ECitySignType::SpeedLimit), 0);
+
+	FCityParams DenseSpeed = Params;
+	DenseSpeed.SignSpacing = 1500.0;
+	TestTrue(TEXT("A shorter SignSpacing places more speed limits"), CountType(CityLayout::Generate(DenseSpeed, FVector::ZeroVector, 9), ECitySignType::SpeedLimit) > CountType(Layout, ECitySignType::SpeedLimit));
+
+	FCityParams StopOnly = Params;
+	StopOnly.bYieldSigns = false;
+	TestEqual(TEXT("With yield disabled, its intersections get stop signs instead"),
+		CountType(CityLayout::Generate(StopOnly, FVector::ZeroVector, 9), ECitySignType::Stop),
+		CountType(Layout, ECitySignType::Stop) + CountType(Layout, ECitySignType::Yield));
+	return true;
+}
+
 #endif

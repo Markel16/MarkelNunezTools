@@ -30,6 +30,41 @@ namespace PCGCityPins
 	const FName Lawns(TEXT("Lawns"));
 	const FName ParkTrees(TEXT("ParkTrees"));
 	const FName ParkBushes(TEXT("ParkBushes"));
+	const FName Crosswalks(TEXT("Crosswalks"));
+	const FName CrosswalkStripes(TEXT("CrosswalkStripes"));
+	const FName Entrances(TEXT("Entrances"));
+	const FName Cars(TEXT("Cars"));
+	const FName Signs(TEXT("Signs"));
+}
+
+namespace PCGCityAssets
+{
+	const TCHAR* const CityFolder = TEXT("/MarkelNunezTool/City");
+	const FName MeshAttribute(TEXT("Mesh"));
+	const FName MaterialAttribute(TEXT("Material"));
+
+	FString GetLookMaterialName(const FName Look)
+	{
+		return FString::Printf(TEXT("MI_City%s"), *Look.ToString());
+	}
+
+	FSoftObjectPath GetShapeMeshPath(const ECityShape Shape)
+	{
+		switch (Shape)
+		{
+		case ECityShape::Cylinder:
+			return FSoftObjectPath(TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+		case ECityShape::Cone:
+			return FSoftObjectPath(TEXT("/Engine/BasicShapes/Cone.Cone"));
+		default:
+			return FSoftObjectPath(TEXT("/Engine/BasicShapes/Cube.Cube"));
+		}
+	}
+
+	FSoftObjectPath GetMaterialPath(const FString& AssetName)
+	{
+		return FSoftObjectPath(FString::Printf(TEXT("%s/%s.%s"), CityFolder, *AssetName, *AssetName));
+	}
 }
 
 namespace
@@ -42,6 +77,9 @@ namespace
 		const FName Frontage(TEXT("Frontage"));
 		const FName BlockCenter(TEXT("BlockCenter"));
 		const FName Height(TEXT("Height"));
+		const FName Model(TEXT("Model"));
+		const FName Color(TEXT("Color"));
+		const FName SignType(TEXT("SignType"));
 	}
 
 	enum class ECityAttributes : uint8
@@ -52,6 +90,8 @@ namespace
 		Frontage = 1 << 2,
 		BlockCenter = 1 << 3,
 		Height = 1 << 4,
+		// The Mesh and Material paths the attribute spawner reads, plus Model, Color and SignType for Inspect.
+		Visual = 1 << 5,
 	};
 	ENUM_CLASS_FLAGS(ECityAttributes);
 
@@ -65,11 +105,24 @@ namespace
 		{ TEXT("ParkRatio"), &FCityParams::ParkRatio },
 		{ TEXT("ParkTreeDensity"), &FCityParams::ParkTreeDensity },
 		{ TEXT("VegetationScaleVariation"), &FCityParams::VegetationScaleVariation },
+		{ TEXT("ParkingOccupancy"), &FCityParams::ParkingOccupancy },
+		{ TEXT("ParkingClearance"), &FCityParams::ParkingClearance },
+		{ TEXT("CarVariation"), &FCityParams::CarVariation },
+		{ TEXT("SignDistance"), &FCityParams::SignDistance },
+		{ TEXT("SignSpacing"), &FCityParams::SignSpacing },
 		{ TEXT("StreetWidth"), &FCityParams::StreetWidth },
 		{ TEXT("SidewalkWidth"), &FCityParams::SidewalkWidth },
 		{ TEXT("LotSize"), &FCityParams::LotSize },
 		{ TEXT("PropSpacing"), &FCityParams::PropSpacing },
 		{ TEXT("TreeScale"), &FCityParams::TreeScale },
+	};
+
+	// Which sign types are enabled travel as bool attributes with the same names as the graph parameters.
+	const TPair<FName, bool FCityParams::*> BoolParamFields[] = {
+		{ TEXT("StopSigns"), &FCityParams::bStopSigns },
+		{ TEXT("YieldSigns"), &FCityParams::bYieldSigns },
+		{ TEXT("DirectionSigns"), &FCityParams::bDirectionSigns },
+		{ TEXT("SpeedLimitSigns"), &FCityParams::bSpeedLimitSigns },
 	};
 
 	bool ReadParams(FPCGContext* Context, FCityParams& OutParams)
@@ -86,6 +139,13 @@ namespace
 			for (const TPair<FName, double FCityParams::*>& Field : ParamFields)
 			{
 				if (const FPCGMetadataAttribute<double>* Attribute = Metadata->GetConstTypedAttribute<double>(Field.Key))
+				{
+					OutParams.*Field.Value = Attribute->GetValueFromItemKey(PCGFirstEntryKey);
+				}
+			}
+			for (const TPair<FName, bool FCityParams::*>& Field : BoolParamFields)
+			{
+				if (const FPCGMetadataAttribute<bool>* Attribute = Metadata->GetConstTypedAttribute<bool>(Field.Key))
 				{
 					OutParams.*Field.Value = Attribute->GetValueFromItemKey(PCGFirstEntryKey);
 				}
@@ -118,7 +178,10 @@ namespace
 			{
 				FCityPiece& Piece = Pieces.AddDefaulted_GetRef();
 				Piece.Location = Point.Transform.GetLocation();
-				Piece.Yaw = Point.Transform.Rotator().Yaw;
+				const FRotator Rotation = Point.Transform.Rotator();
+				Piece.Yaw = Rotation.Yaw;
+				Piece.Pitch = Rotation.Pitch;
+				Piece.Roll = Rotation.Roll;
 				Piece.Scale = Point.Transform.GetScale3D();
 				Piece.LocalBounds = FBox(Point.BoundsMin, Point.BoundsMax);
 				Piece.Seed = Point.Seed;
@@ -151,6 +214,11 @@ namespace
 		FPCGMetadataAttribute<bool>* FrontageAttribute = CreateIf(ECityAttributes::Frontage, CityAttributes::Frontage, false);
 		FPCGMetadataAttribute<FVector>* BlockCenterAttribute = CreateIf(ECityAttributes::BlockCenter, CityAttributes::BlockCenter, FVector::ZeroVector);
 		FPCGMetadataAttribute<double>* HeightAttribute = CreateIf(ECityAttributes::Height, CityAttributes::Height, 0.0);
+		FPCGMetadataAttribute<int32>* ModelAttribute = CreateIf(ECityAttributes::Visual, CityAttributes::Model, int32(INDEX_NONE));
+		FPCGMetadataAttribute<int32>* ColorAttribute = CreateIf(ECityAttributes::Visual, CityAttributes::Color, int32(INDEX_NONE));
+		FPCGMetadataAttribute<int32>* SignTypeAttribute = CreateIf(ECityAttributes::Visual, CityAttributes::SignType, int32(INDEX_NONE));
+		FPCGMetadataAttribute<FSoftObjectPath>* MeshAttribute = CreateIf(ECityAttributes::Visual, PCGCityAssets::MeshAttribute, FSoftObjectPath());
+		FPCGMetadataAttribute<FSoftObjectPath>* MaterialAttribute = CreateIf(ECityAttributes::Visual, PCGCityAssets::MaterialAttribute, FSoftObjectPath());
 
 		TArray<FPCGPoint>& Points = PointData->GetMutablePoints();
 		Points.Reserve(Pieces.Num());
@@ -187,6 +255,14 @@ namespace
 			if (HeightAttribute)
 			{
 				HeightAttribute->SetValue(Point.MetadataEntry, Piece.Height);
+			}
+			if (ModelAttribute)
+			{
+				ModelAttribute->SetValue(Point.MetadataEntry, Piece.ModelIndex);
+				ColorAttribute->SetValue(Point.MetadataEntry, Piece.ColorIndex);
+				SignTypeAttribute->SetValue(Point.MetadataEntry, Piece.SignType);
+				MeshAttribute->SetValue(Point.MetadataEntry, PCGCityAssets::GetShapeMeshPath(Piece.Shape));
+				MaterialAttribute->SetValue(Point.MetadataEntry, PCGCityAssets::GetMaterialPath(PCGCityAssets::GetLookMaterialName(Piece.Look)));
 			}
 		}
 
@@ -228,6 +304,13 @@ namespace
 			for (const TPair<FName, double FCityParams::*>& Field : ParamFields)
 			{
 				if (FPCGMetadataAttribute<double>* Attribute = Metadata->CreateAttribute<double>(Field.Key, Params.*Field.Value, false, false))
+				{
+					Attribute->SetValue(Key, Params.*Field.Value);
+				}
+			}
+			for (const TPair<FName, bool FCityParams::*>& Field : BoolParamFields)
+			{
+				if (FPCGMetadataAttribute<bool>* Attribute = Metadata->CreateAttribute<bool>(Field.Key, Params.*Field.Value, false, false))
 				{
 					Attribute->SetValue(Key, Params.*Field.Value);
 				}
@@ -292,6 +375,15 @@ FCityParams UPCGCityParamsSettings::ToCityParams() const
 	Params.ParkRatio = ParkRatio;
 	Params.ParkTreeDensity = ParkTreeDensity;
 	Params.VegetationScaleVariation = VegetationScaleVariation;
+	Params.ParkingOccupancy = ParkingOccupancy;
+	Params.ParkingClearance = ParkingClearance;
+	Params.CarVariation = CarVariation;
+	Params.bStopSigns = StopSigns;
+	Params.bYieldSigns = YieldSigns;
+	Params.bDirectionSigns = DirectionSigns;
+	Params.bSpeedLimitSigns = SpeedLimitSigns;
+	Params.SignDistance = SignDistance;
+	Params.SignSpacing = SignSpacing;
 	Params.StreetWidth = StreetWidth;
 	Params.SidewalkWidth = SidewalkWidth;
 	Params.LotSize = LotSize;
@@ -395,6 +487,81 @@ bool UPCGCityParkVegetationSettings::RunLayer(FPCGContext* Context, const FCityP
 	WritePieces(Context, PCGCityPins::Lawns, Lawns, ECityAttributes::BlockID);
 	WritePieces(Context, PCGCityPins::ParkTrees, Trees, ECityAttributes::BlockID);
 	WritePieces(Context, PCGCityPins::ParkBushes, Bushes, ECityAttributes::BlockID);
+	return true;
+}
+
+TArray<FName> UPCGCityCrosswalksSettings::GetInputLabels() const { return { PCGCityPins::Streets, PCGCityPins::Params }; }
+TArray<FName> UPCGCityCrosswalksSettings::GetOutputLabels() const { return { PCGCityPins::Crosswalks, PCGCityPins::CrosswalkStripes }; }
+
+bool UPCGCityCrosswalksSettings::RunLayer(FPCGContext* Context, const FCityParams& Params) const
+{
+	const TArray<FCityPiece> Streets = ReadPieces(Context, PCGCityPins::Streets);
+	TArray<FCityPiece> Zones;
+	TArray<FCityPiece> Stripes;
+	CityLayout::BuildCrosswalks(Params, Streets, Zones, Stripes);
+	WritePieces(Context, PCGCityPins::Crosswalks, Zones, ECityAttributes::None);
+	WritePieces(Context, PCGCityPins::CrosswalkStripes, Stripes, ECityAttributes::None);
+	return true;
+}
+
+TArray<FName> UPCGCityEntrancesSettings::GetInputLabels() const { return { PCGCityPins::Buildings, PCGCityPins::Blocks, PCGCityPins::Params }; }
+TArray<FName> UPCGCityEntrancesSettings::GetOutputLabels() const { return { PCGCityPins::Entrances }; }
+
+bool UPCGCityEntrancesSettings::RunLayer(FPCGContext* Context, const FCityParams& Params) const
+{
+	const TArray<FCityPiece> Buildings = ReadPieces(Context, PCGCityPins::Buildings);
+	const TArray<FCityPiece> Blocks = ReadPieces(Context, PCGCityPins::Blocks);
+	WritePieces(Context, PCGCityPins::Entrances, CityLayout::BuildEntrances(Params, Buildings, Blocks), ECityAttributes::BlockID);
+	return true;
+}
+
+TArray<FName> UPCGCityParkingSettings::GetInputLabels() const
+{
+	return { PCGCityPins::Streets, PCGCityPins::Crossings, PCGCityPins::Blocks, PCGCityPins::Crosswalks, PCGCityPins::Entrances, PCGCityPins::Params };
+}
+
+TArray<FName> UPCGCityParkingSettings::GetOutputLabels() const { return { PCGCityPins::Cars }; }
+
+bool UPCGCityParkingSettings::RunLayer(FPCGContext* Context, const FCityParams& Params) const
+{
+	TArray<FCityPiece> Cars;
+	TArray<FCityPiece> Parts;
+	CityLayout::BuildParkedCars(Params,
+		ReadPieces(Context, PCGCityPins::Streets),
+		ReadPieces(Context, PCGCityPins::Crossings),
+		ReadPieces(Context, PCGCityPins::Blocks),
+		ReadPieces(Context, PCGCityPins::Crosswalks),
+		ReadPieces(Context, PCGCityPins::Entrances),
+		Context->GetSeed(), Cars, Parts);
+
+	// Bodies, cabins and wheels go out together; each point names its own mesh and material.
+	Cars.Append(Parts);
+	WritePieces(Context, PCGCityPins::Cars, Cars, ECityAttributes::Visual);
+	return true;
+}
+
+TArray<FName> UPCGCitySignsSettings::GetInputLabels() const
+{
+	return { PCGCityPins::Streets, PCGCityPins::Crossings, PCGCityPins::Blocks, PCGCityPins::Lamps, PCGCityPins::Trees, PCGCityPins::Params };
+}
+
+TArray<FName> UPCGCitySignsSettings::GetOutputLabels() const { return { PCGCityPins::Signs }; }
+
+bool UPCGCitySignsSettings::RunLayer(FPCGContext* Context, const FCityParams& Params) const
+{
+	TArray<FCityPiece> Signs;
+	TArray<FCityPiece> Parts;
+	CityLayout::BuildSigns(Params,
+		ReadPieces(Context, PCGCityPins::Streets),
+		ReadPieces(Context, PCGCityPins::Crossings),
+		ReadPieces(Context, PCGCityPins::Blocks),
+		ReadPieces(Context, PCGCityPins::Lamps),
+		ReadPieces(Context, PCGCityPins::Trees),
+		Signs, Parts);
+
+	// Poles and panels go out together; each point names its own shape and material.
+	Signs.Append(Parts);
+	WritePieces(Context, PCGCityPins::Signs, Signs, ECityAttributes::Visual);
 	return true;
 }
 

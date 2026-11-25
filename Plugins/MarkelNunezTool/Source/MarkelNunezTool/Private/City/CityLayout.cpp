@@ -17,6 +17,78 @@ namespace
 	constexpr uint32 PropSalt = 0x92A3B4C5;
 	constexpr uint32 ParkSalt = 0xD6E7F809;
 	constexpr uint32 VegetationSalt = 0x1B2C3D4E;
+	constexpr uint32 CarSalt = 0x5F607182;
+
+	// Car models built from basic shapes: body and cabin sizes (length along the car, width, height) and
+	// how far the cabin sits behind the body center. The first one is used when CarVariation is 0.
+	struct FCarModel
+	{
+		FVector Body;
+		FVector Cabin;
+		double CabinOffset;
+	};
+	const FCarModel CarModels[] = {
+		{ FVector(460.0, 180.0, 65.0), FVector(230.0, 165.0, 55.0), -30.0 },  // Sedan
+		{ FVector(380.0, 170.0, 65.0), FVector(200.0, 155.0, 55.0), -20.0 },  // Compact
+		{ FVector(470.0, 190.0, 90.0), FVector(290.0, 180.0, 65.0), -40.0 },  // SUV
+		{ FVector(520.0, 200.0, 115.0), FVector(400.0, 195.0, 85.0), -40.0 }, // Van
+	};
+
+	const FLinearColor CarPalette[] = {
+		FLinearColor(0.55f, 0.56f, 0.58f), // Silver
+		FLinearColor(0.85f, 0.85f, 0.85f), // White
+		FLinearColor(0.02f, 0.02f, 0.02f), // Black
+		FLinearColor(0.50f, 0.03f, 0.03f), // Red
+		FLinearColor(0.04f, 0.10f, 0.45f), // Blue
+		FLinearColor(0.80f, 0.60f, 0.05f), // Yellow
+		FLinearColor(0.05f, 0.30f, 0.10f), // Green
+		FLinearColor(0.70f, 0.25f, 0.05f), // Orange
+	};
+
+	const FName TireLook(TEXT("Tire"));
+	const FName SignPoleLook(TEXT("SignPole"));
+	const FName SignRedLook(TEXT("SignRed"));
+	const FName SignWhiteLook(TEXT("SignWhite"));
+	const FName SignBlueLook(TEXT("SignBlue"));
+
+	FName GetCarLook(const int32 ColorIndex)
+	{
+		return FName(*FString::Printf(TEXT("Car%d"), ColorIndex));
+	}
+
+	// A street segment seen from its own axis: Side points to the left of Axis.
+	struct FStreetFrame
+	{
+		FVector2D Center;
+		FVector2D Axis;
+		FVector2D Side;
+		double Length = 0.0;
+		double Width = 0.0;
+		double TopZ = 0.0;
+		double AxisYaw = 0.0;
+
+		explicit FStreetFrame(const FCityPiece& Street)
+		{
+			const FBox Box = Street.GetWorldBox();
+			const FVector Size = Box.GetSize();
+			const bool bAlongX = Size.X >= Size.Y;
+			Center = FVector2D(Box.GetCenter());
+			Axis = bAlongX ? FVector2D(1.0, 0.0) : FVector2D(0.0, 1.0);
+			Side = FVector2D(-Axis.Y, Axis.X);
+			Length = bAlongX ? Size.X : Size.Y;
+			Width = bAlongX ? Size.Y : Size.X;
+			TopZ = Box.Max.Z;
+			AxisYaw = bAlongX ? 0.0 : 90.0;
+		}
+
+		// An axis-aligned box in the street, Along the axis and SideOffset towards the left.
+		FCityPiece MakeBox(const double Along, const double SideOffset, const double AlongSize, const double SideSize, const double CenterZ, const double Height) const
+		{
+			const FVector2D BoxCenter = Center + Axis * Along + Side * SideOffset;
+			const FVector2D Size2D = Axis.X != 0.0 ? FVector2D(AlongSize, SideSize) : FVector2D(SideSize, AlongSize);
+			return FCityPiece::MakeBox(FVector(BoxCenter, CenterZ), FVector(Size2D, Height));
+		}
+	};
 
 	FRandomStream MakeStream(const int32 PieceSeed, const int32 GraphSeed, const uint32 Salt)
 	{
@@ -164,7 +236,7 @@ FCityPiece FCityPiece::MakeBox(const FVector& Center, const FVector& Size, const
 
 FTransform FCityPiece::GetTransform() const
 {
-	return FTransform(FRotator(0.0, Yaw, 0.0), Location, Scale);
+	return FTransform(FRotator(Pitch, Yaw, Roll), Location, Scale);
 }
 
 FBox FCityPiece::GetWorldBox() const
@@ -610,6 +682,412 @@ FCityOverlapReport CityLayout::CleanOverlaps(const FCityParams& Params, TConstAr
 	return Report;
 }
 
+void CityLayout::BuildCrosswalks(const FCityParams& Params, TConstArrayView<FCityPiece> Streets, TArray<FCityPiece>& OutZones, TArray<FCityPiece>& OutStripes)
+{
+	OutZones.Reset();
+	OutStripes.Reset();
+
+	for (const FCityPiece& Street : Streets)
+	{
+		const FStreetFrame Frame(Street);
+		if (Frame.Length < 2.0 * Params.CrosswalkLength)
+		{
+			continue;
+		}
+
+		// One crosswalk at each end of the segment, right next to the crossing.
+		const double MarkingZ = Frame.TopZ + Params.MarkingThickness / 2.0;
+		const int32 StripeCount = FMath::Max(1, FMath::FloorToInt(Frame.Width / Params.CrosswalkStripePitch));
+		const double FirstStripe = -(StripeCount - 1) * Params.CrosswalkStripePitch / 2.0;
+		for (const double End : { -1.0, 1.0 })
+		{
+			const double Along = End * (Frame.Length - Params.CrosswalkLength) / 2.0;
+			OutZones.Add(Frame.MakeBox(Along, 0.0, Params.CrosswalkLength, Frame.Width, MarkingZ, Params.MarkingThickness));
+
+			// Zebra stripes run with the traffic and repeat across the street.
+			for (int32 Stripe = 0; Stripe < StripeCount; ++Stripe)
+			{
+				OutStripes.Add(Frame.MakeBox(Along, FirstStripe + Stripe * Params.CrosswalkStripePitch,
+					0.9 * Params.CrosswalkLength, Params.CrosswalkStripeWidth, MarkingZ, Params.MarkingThickness));
+			}
+		}
+	}
+}
+
+TArray<FCityPiece> CityLayout::BuildEntrances(const FCityParams& Params, TConstArrayView<FCityPiece> Buildings, TConstArrayView<FCityPiece> Blocks)
+{
+	TMap<int32, FBox> BlockBoxes;
+	for (const FCityPiece& Block : Blocks)
+	{
+		BlockBoxes.Add(Block.BlockID, Block.GetWorldBox());
+	}
+
+	TArray<FCityPiece> Entrances;
+	for (const FCityPiece& Building : Buildings)
+	{
+		const FBox* BlockBox = BlockBoxes.Find(Building.BlockID);
+		const double YawRadians = FMath::DegreesToRadians(Building.Yaw);
+		const FVector2D Facing(FMath::RoundToDouble(FMath::Cos(YawRadians)), FMath::RoundToDouble(FMath::Sin(YawRadians)));
+		if (!BlockBox || Facing.IsNearlyZero())
+		{
+			continue;
+		}
+
+		// The entrance sits in the curb lane of the street the building faces, in line with the building.
+		const FVector2D BlockCenter(BlockBox->GetCenter());
+		const FVector2D HalfSize(BlockBox->GetExtent());
+		const bool bFacesX = FMath::Abs(Facing.X) > 0.5;
+		const FVector2D Center = bFacesX
+			? FVector2D(BlockCenter.X + Facing.X * (HalfSize.X + Params.ParkingLaneWidth / 2.0), Building.Location.Y)
+			: FVector2D(Building.Location.X, BlockCenter.Y + Facing.Y * (HalfSize.Y + Params.ParkingLaneWidth / 2.0));
+		const FVector2D Size = bFacesX ? FVector2D(Params.ParkingLaneWidth, Params.EntranceWidth) : FVector2D(Params.EntranceWidth, Params.ParkingLaneWidth);
+		const double RoadTopZ = BlockBox->Min.Z + Params.RoadThickness;
+
+		FCityPiece& Entrance = Entrances.Add_GetRef(FCityPiece::MakeBox(FVector(Center, RoadTopZ + Params.MarkingThickness / 2.0), FVector(Size, Params.MarkingThickness)));
+		Entrance.BlockID = Building.BlockID;
+	}
+	return Entrances;
+}
+
+void CityLayout::BuildParkedCars(const FCityParams& Params, TConstArrayView<FCityPiece> Streets, TConstArrayView<FCityPiece> Crossings, TConstArrayView<FCityPiece> Blocks, TConstArrayView<FCityPiece> Crosswalks, TConstArrayView<FCityPiece> Entrances, const int32 Seed, TArray<FCityPiece>& OutCars, TArray<FCityPiece>& OutParts)
+{
+	OutCars.Reset();
+	OutParts.Reset();
+
+	const double Variation = FMath::Clamp(Params.CarVariation, 0.0, 1.0);
+	const double Occupancy = FMath::Clamp(Params.ParkingOccupancy, 0.0, 1.0);
+	const double Clearance = FMath::Max(Params.ParkingClearance, 0.0);
+	const int32 ModelCount = 1 + FMath::RoundToInt32(Variation * (UE_ARRAY_COUNT(CarModels) - 1));
+	const int32 ColorCount = 1 + FMath::RoundToInt32(Variation * (UE_ARRAY_COUNT(CarPalette) - 1));
+	const double GridCell = FMath::Max(Params.Cell(), 100.0);
+
+	// Forbidden zones: cars must stay Clearance away from these...
+	FFootprintGrid KeepClear(GridCell);
+	for (const FCityPiece& Piece : Crossings)
+	{
+		KeepClear.Add(Piece.GetFootprint());
+	}
+	for (const FCityPiece& Piece : Crosswalks)
+	{
+		KeepClear.Add(Piece.GetFootprint());
+	}
+
+	// ...and may not block an entrance.
+	FFootprintGrid EntranceArea(GridCell);
+	for (const FCityPiece& Piece : Entrances)
+	{
+		EntranceArea.Add(Piece.GetFootprint());
+	}
+
+	FFootprintGrid Curbs(GridCell);
+	for (const FCityPiece& Block : Blocks)
+	{
+		Curbs.Add(Block.GetFootprint());
+	}
+
+	for (const FCityPiece& Street : Streets)
+	{
+		const FStreetFrame Frame(Street);
+		const int32 SlotCount = FMath::FloorToInt(Frame.Length / Params.CarSlotLength);
+		const double FirstSlot = -(SlotCount - 1) * Params.CarSlotLength / 2.0;
+
+		for (const double Side : { -1.0, 1.0 })
+		{
+			// Only park along a curb: the edge of the city has streets with no block on the outer side.
+			const FCityPiece Probe = Frame.MakeBox(0.0, Side * (Frame.Width + Params.SidewalkWidth) / 2.0, 20.0, 20.0, Frame.TopZ, 1.0);
+			if (!Curbs.OverlapsAny(Probe.GetFootprint()))
+			{
+				continue;
+			}
+
+			// Right-hand traffic: cars on the right of the axis face along it, cars on the left face back.
+			const double LaneOffset = Side * (Frame.Width - Params.ParkingLaneWidth) / 2.0;
+			const double Yaw = Frame.AxisYaw + (Side > 0.0 ? 180.0 : 0.0);
+			const FVector2D Forward = Frame.Axis * (Side > 0.0 ? -1.0 : 1.0);
+			const FVector2D Across(-Forward.Y, Forward.X);
+
+			for (int32 Slot = 0; Slot < SlotCount; ++Slot)
+			{
+				const double Along = FirstSlot + Slot * Params.CarSlotLength;
+				const FCityPiece SlotBox = Frame.MakeBox(Along, LaneOffset, Params.CarSlotLength, Params.ParkingLaneWidth, Frame.TopZ, 1.0);
+				const FCityPiece ClearedBox = Frame.MakeBox(Along, LaneOffset, Params.CarSlotLength + 2.0 * Clearance, Params.ParkingLaneWidth, Frame.TopZ, 1.0);
+				if (KeepClear.OverlapsAny(ClearedBox.GetFootprint()) || EntranceArea.OverlapsAny(SlotBox.GetFootprint()))
+				{
+					continue;
+				}
+
+				FRandomStream Random = MakeStream(SeedFromPosition(SlotBox.Location), Seed, CarSalt);
+				if (Random.FRand() >= Occupancy)
+				{
+					continue;
+				}
+
+				const int32 ModelIndex = Random.RandRange(0, ModelCount - 1);
+				const int32 ColorIndex = Random.RandRange(0, ColorCount - 1);
+				const FCarModel& Model = CarModels[ModelIndex];
+
+				// A little play inside the slot so the row of cars is not perfectly regular.
+				const double Jitter = Random.FRandRange(-1.0, 1.0) * (Params.CarSlotLength - Model.Body.X) / 4.0;
+				const FVector2D Center = FVector2D(SlotBox.Location) + Frame.Axis * Jitter;
+				const double BodyBottom = Frame.TopZ + Params.CarLift;
+
+				const auto AddPart = [&](TArray<FCityPiece>& Target, const FVector2D& PartCenter, const double CenterZ, const FVector& Size, const int32 PartColor)
+				{
+					FCityPiece& Part = Target.Add_GetRef(FCityPiece::MakeBox(FVector(PartCenter, CenterZ), Size, Yaw));
+					Part.ModelIndex = ModelIndex;
+					Part.ColorIndex = PartColor;
+					Part.Look = PartColor == INDEX_NONE ? TireLook : GetCarLook(PartColor);
+				};
+				AddPart(OutCars, Center, BodyBottom + Model.Body.Z / 2.0, Model.Body, ColorIndex);
+				AddPart(OutParts, Center + Forward * Model.CabinOffset, BodyBottom + Model.Body.Z + Model.Cabin.Z / 2.0, Model.Cabin, ColorIndex);
+
+				const FVector WheelBox(Params.WheelSize, Params.WheelWidth, Params.WheelSize);
+				for (const double Front : { -1.0, 1.0 })
+				{
+					for (const double Lateral : { -1.0, 1.0 })
+					{
+						const FVector2D WheelCenter = Center
+							+ Forward * (Front * (Model.Body.X / 2.0 - Params.WheelSize))
+							+ Across * (Lateral * (Model.Body.Y - Params.WheelWidth) / 2.0);
+						AddPart(OutParts, WheelCenter, Frame.TopZ + Params.WheelSize / 2.0, WheelBox, INDEX_NONE);
+					}
+				}
+			}
+		}
+	}
+}
+
+TConstArrayView<FLinearColor> CityLayout::GetCarPalette()
+{
+	return CarPalette;
+}
+
+int32 CityLayout::GetCarModelCount()
+{
+	return UE_ARRAY_COUNT(CarModels);
+}
+
+TConstArrayView<TPair<FName, FLinearColor>> CityLayout::GetLooks()
+{
+	static const TArray<TPair<FName, FLinearColor>> Looks = []()
+	{
+		TArray<TPair<FName, FLinearColor>> Result;
+		for (int32 ColorIndex = 0; ColorIndex < UE_ARRAY_COUNT(CarPalette); ++ColorIndex)
+		{
+			Result.Emplace(GetCarLook(ColorIndex), CarPalette[ColorIndex]);
+		}
+		Result.Emplace(TireLook, FLinearColor(0.01f, 0.01f, 0.01f));
+		Result.Emplace(SignPoleLook, FLinearColor(0.3f, 0.3f, 0.32f));
+		Result.Emplace(SignRedLook, FLinearColor(0.6f, 0.02f, 0.02f));
+		Result.Emplace(SignWhiteLook, FLinearColor(0.9f, 0.9f, 0.9f));
+		Result.Emplace(SignBlueLook, FLinearColor(0.02f, 0.12f, 0.6f));
+		return Result;
+	}();
+	return Looks;
+}
+
+bool CityLayout::IsMajorStreet(const FCityParams& Params, const int32 RowOrCol)
+{
+	return Params.MajorStreetEvery > 0 && RowOrCol % Params.MajorStreetEvery == 0;
+}
+
+namespace
+{
+	// A sign is a pole plus the panels that give it its shape, all facing the traffic.
+	void AddSignPieces(const FCityParams& Params, const ECitySignType Type, const FVector2D& Position, const FVector2D& Facing, const double GroundZ, TArray<FCityPiece>& OutSigns, TArray<FCityPiece>& OutParts)
+	{
+		const double Yaw = FMath::RadiansToDegrees(FMath::Atan2(Facing.Y, Facing.X));
+		FCityPiece& Pole = OutSigns.Add_GetRef(FCityPiece::MakeBox(
+			FVector(Position, GroundZ + Params.SignPoleHeight / 2.0),
+			FVector(2.0 * Params.SignPoleRadius, 2.0 * Params.SignPoleRadius, Params.SignPoleHeight), Yaw));
+		Pole.Shape = ECityShape::Cylinder;
+		Pole.Look = SignPoleLook;
+		Pole.SignType = static_cast<int32>(Type);
+
+		// Panels are thin along the facing direction; Forward stacks the inner panel in front of the outer one.
+		const double PanelZ = GroundZ + Params.SignPoleHeight - 35.0;
+		const auto AddPanel = [&](const ECityShape Shape, const FName Look, const FVector& Size, const double Forward, const double Pitch, const double Roll, const double ZOffset)
+		{
+			FCityPiece& Panel = OutParts.Add_GetRef(FCityPiece::MakeBox(
+				FVector(Position + Facing * (Params.SignPoleRadius + Forward), PanelZ + ZOffset), Size, Yaw));
+			Panel.Pitch = Pitch;
+			Panel.Roll = Roll;
+			Panel.Shape = Shape;
+			Panel.Look = Look;
+			Panel.SignType = static_cast<int32>(Type);
+		};
+
+		// Discs are cylinders pitched 90 degrees; triangles are flattened cones rolled upside down.
+		switch (Type)
+		{
+		case ECitySignType::Stop:
+			AddPanel(ECityShape::Cylinder, SignRedLook, FVector(70.0, 70.0, 2.0), 2.0, 90.0, 0.0, 0.0);
+			break;
+		case ECitySignType::Yield:
+			AddPanel(ECityShape::Cone, SignRedLook, FVector(2.0, 80.0, 70.0), 2.0, 0.0, 180.0, 0.0);
+			AddPanel(ECityShape::Cone, SignWhiteLook, FVector(2.0, 50.0, 44.0), 3.5, 0.0, 180.0, 4.4);
+			break;
+		case ECitySignType::Direction:
+			AddPanel(ECityShape::Cube, SignBlueLook, FVector(2.0, 60.0, 60.0), 2.0, 0.0, 0.0, 0.0);
+			AddPanel(ECityShape::Cube, SignWhiteLook, FVector(2.0, 8.0, 30.0), 3.5, 0.0, 0.0, -6.0);
+			AddPanel(ECityShape::Cube, SignWhiteLook, FVector(2.0, 18.0, 18.0), 3.5, 0.0, 45.0, 10.0);
+			break;
+		case ECitySignType::SpeedLimit:
+			AddPanel(ECityShape::Cylinder, SignRedLook, FVector(60.0, 60.0, 2.0), 2.0, 90.0, 0.0, 0.0);
+			AddPanel(ECityShape::Cylinder, SignWhiteLook, FVector(46.0, 46.0, 2.0), 3.5, 90.0, 0.0, 0.0);
+			break;
+		}
+	}
+}
+
+void CityLayout::BuildSigns(const FCityParams& Params, TConstArrayView<FCityPiece> Streets, TConstArrayView<FCityPiece> Crossings, TConstArrayView<FCityPiece> Blocks, TConstArrayView<FCityPiece> Lamps, TConstArrayView<FCityPiece> Trees, TArray<FCityPiece>& OutSigns, TArray<FCityPiece>& OutParts)
+{
+	OutSigns.Reset();
+	OutParts.Reset();
+
+	const double GridCell = FMath::Max(Params.Cell(), 100.0);
+	FFootprintGrid Sidewalks(GridCell);
+	for (const FCityPiece& Block : Blocks)
+	{
+		Sidewalks.Add(Block.GetFootprint());
+	}
+
+	FFootprintGrid Road(GridCell);
+	TMap<FIntPoint, const FCityPiece*> CrossingsByPosition;
+	for (const FCityPiece& Crossing : Crossings)
+	{
+		Road.Add(Crossing.GetFootprint());
+		CrossingsByPosition.Add(FIntPoint(FMath::RoundToInt32(Crossing.Location.X), FMath::RoundToInt32(Crossing.Location.Y)), &Crossing);
+	}
+	for (const FCityPiece& Street : Streets)
+	{
+		Road.Add(Street.GetFootprint());
+	}
+
+	// Lamp posts and tree trunks the sign poles must keep away from.
+	FFootprintGrid Obstacles(GridCell);
+	for (TConstArrayView<FCityPiece> Props : { Lamps, Trees })
+	{
+		for (const FCityPiece& Prop : Props)
+		{
+			const FVector2D Trunk(Prop.Location);
+			Obstacles.Add(FBox2D(Trunk - FVector2D(Params.SignPropClearance), Trunk + FVector2D(Params.SignPropClearance)));
+		}
+	}
+
+	const auto FindCrossing = [&CrossingsByPosition](const FVector2D& Position) -> const FCityPiece*
+	{
+		const FIntPoint Rounded(FMath::RoundToInt32(Position.X), FMath::RoundToInt32(Position.Y));
+		for (int32 DY = -1; DY <= 1; ++DY)
+		{
+			for (int32 DX = -1; DX <= 1; ++DX)
+			{
+				if (const FCityPiece* const* Crossing = CrossingsByPosition.Find(Rounded + FIntPoint(DX, DY)))
+				{
+					return *Crossing;
+				}
+			}
+		}
+		return nullptr;
+	};
+
+	// Slides the sign back along the curb until it is clear of lamps and trees; gives up if it would leave the sidewalk.
+	const auto PlaceSign = [&](const ECitySignType Type, const FVector2D& Base, const FVector2D& Facing, const double GroundZ)
+	{
+		for (int32 Step = 0; Step <= 8; ++Step)
+		{
+			const FVector2D Position = Base + Facing * (Step * 50.0);
+			const FBox2D Pole(Position - FVector2D(Params.SignPoleRadius), Position + FVector2D(Params.SignPoleRadius));
+			if (!Sidewalks.OverlapsAny(Pole) || Road.OverlapsAny(Pole))
+			{
+				return;
+			}
+			if (!Obstacles.OverlapsAny(Pole))
+			{
+				AddSignPieces(Params, Type, Position, Facing, GroundZ, OutSigns, OutParts);
+				return;
+			}
+		}
+	};
+
+	const double Distance = FMath::Max(Params.SignDistance, 4.0 * Params.SignPoleRadius);
+	const double CurbOffset = Params.StreetWidth / 2.0 + Params.SignCurbOffset;
+
+	for (const FCityPiece& Street : Streets)
+	{
+		const FStreetFrame Frame(Street);
+		const bool bAlongX = Frame.Axis.X != 0.0;
+		const double GroundZ = Frame.TopZ - Params.RoadThickness + Params.SidewalkHeight;
+
+		for (const double End : { -1.0, 1.0 })
+		{
+			// Traffic driving towards this end of the segment, with the sidewalk on its right.
+			const FVector2D Drive = Frame.Axis * End;
+			const FVector2D Right(Drive.Y, -Drive.X);
+			const FCityPiece* Crossing = FindCrossing(Frame.Center + Drive * (Frame.Length + Params.StreetWidth) / 2.0);
+			if (!Crossing)
+			{
+				continue;
+			}
+
+			const bool bOwnMajor = IsMajorStreet(Params, bAlongX ? Crossing->Row : Crossing->Col);
+			const bool bCrossMajor = IsMajorStreet(Params, bAlongX ? Crossing->Col : Crossing->Row);
+
+			// Priority: a minor street stops at a main street; between equal streets the ones along Y yield.
+			// If the preferred type is disabled, the other one is used.
+			TOptional<ECitySignType> Type;
+			if (!bOwnMajor && bCrossMajor)
+			{
+				Type = Params.bStopSigns ? ECitySignType::Stop : ECitySignType::Yield;
+			}
+			else if (bOwnMajor == bCrossMajor && !bAlongX)
+			{
+				Type = Params.bYieldSigns ? ECitySignType::Yield : ECitySignType::Stop;
+			}
+			if (Type && ((*Type == ECitySignType::Stop && !Params.bStopSigns) || (*Type == ECitySignType::Yield && !Params.bYieldSigns)))
+			{
+				Type.Reset();
+			}
+
+			const FVector2D Base = Frame.Center + Drive * FMath::Max(Frame.Length / 2.0 - Distance, 0.0) + Right * CurbOffset;
+			if (Type)
+			{
+				PlaceSign(*Type, Base, -Drive, GroundZ);
+			}
+			if (Params.bDirectionSigns && bOwnMajor && bCrossMajor)
+			{
+				PlaceSign(ECitySignType::Direction, Base - Drive * Params.DirectionSignSetback, -Drive, GroundZ);
+			}
+		}
+
+		// Speed limits along the segment for both directions, away from the intersection approaches.
+		if (!Params.bSpeedLimitSigns || Params.SignSpacing <= 0.0)
+		{
+			continue;
+		}
+
+		// Spread them every SignSpacing over the middle of the segment, centered, leaving the approaches free.
+		const double Reach = Frame.Length / 2.0 - Distance - Params.DirectionSignSetback - 200.0;
+		if (Reach < 0.0)
+		{
+			continue;
+		}
+
+		const int32 Count = FMath::FloorToInt(2.0 * Reach / Params.SignSpacing) + 1;
+		const double First = -(Count - 1) * Params.SignSpacing / 2.0;
+		for (const double Direction : { -1.0, 1.0 })
+		{
+			const FVector2D Drive = Frame.Axis * Direction;
+			const FVector2D Right(Drive.Y, -Drive.X);
+			for (int32 Index = 0; Index < Count; ++Index)
+			{
+				const double Along = First + Index * Params.SignSpacing;
+				PlaceSign(ECitySignType::SpeedLimit, Frame.Center + Frame.Axis * Along + Right * CurbOffset, -Drive, GroundZ);
+			}
+		}
+	}
+}
+
 FCityLayout CityLayout::Generate(const FCityParams& Params, const FVector& Origin, const int32 Seed, FCityOverlapReport* OutReport)
 {
 	FCityLayout Layout;
@@ -624,6 +1102,11 @@ FCityLayout CityLayout::Generate(const FCityParams& Params, const FVector& Origi
 	BuildProps(Params, Layout.Blocks, Layout.Crossings, Seed, Layout.Lamps, Layout.Trees);
 
 	const FCityOverlapReport Report = CleanOverlaps(Params, Layout.Streets, Layout.Crossings, Layout.Buildings, Layout.Lamps, Layout.Trees);
+
+	BuildCrosswalks(Params, Layout.Streets, Layout.Crosswalks, Layout.CrosswalkStripes);
+	Layout.Entrances = BuildEntrances(Params, Layout.Buildings, Layout.Blocks);
+	BuildParkedCars(Params, Layout.Streets, Layout.Crossings, Layout.Blocks, Layout.Crosswalks, Layout.Entrances, Seed, Layout.Cars, Layout.CarParts);
+	BuildSigns(Params, Layout.Streets, Layout.Crossings, Layout.Blocks, Layout.Lamps, Layout.Trees, Layout.Signs, Layout.SignParts);
 	if (OutReport)
 	{
 		*OutReport = Report;
@@ -638,5 +1121,8 @@ bool CityLayout::AreEqual(const FCityLayout& A, const FCityLayout& B)
 		&& ArePiecesEqual(A.Lawns, B.Lawns) && ArePiecesEqual(A.ParkTrees, B.ParkTrees)
 		&& ArePiecesEqual(A.ParkBushes, B.ParkBushes) && ArePiecesEqual(A.Lots, B.Lots)
 		&& ArePiecesEqual(A.Built, B.Built) && ArePiecesEqual(A.Buildings, B.Buildings)
-		&& ArePiecesEqual(A.Lamps, B.Lamps) && ArePiecesEqual(A.Trees, B.Trees);
+		&& ArePiecesEqual(A.Lamps, B.Lamps) && ArePiecesEqual(A.Trees, B.Trees)
+		&& ArePiecesEqual(A.Crosswalks, B.Crosswalks) && ArePiecesEqual(A.Entrances, B.Entrances)
+		&& ArePiecesEqual(A.Cars, B.Cars) && ArePiecesEqual(A.CarParts, B.CarParts)
+		&& ArePiecesEqual(A.Signs, B.Signs) && ArePiecesEqual(A.SignParts, B.SignParts);
 }

@@ -5,6 +5,7 @@
 #include "CityToolLibrary.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Input/SButton.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SSpinBox.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/Text/STextBlock.h"
@@ -35,6 +36,16 @@ namespace CityToolTab
 			];
 	}
 
+	TSharedRef<SWidget> MakeCheckRow(const FText& Label, bool& Value)
+	{
+		return SNew(SCheckBox)
+			.IsChecked_Lambda([&Value]() { return Value ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+			.OnCheckStateChanged_Lambda([&Value](const ECheckBoxState State) { Value = State == ECheckBoxState::Checked; })
+			[
+				SNew(STextBlock).Text(Label)
+			];
+	}
+
 	TSharedRef<SWidget> MakeButton(const FText& Label, TFunction<void()> OnClicked)
 	{
 		return SNew(SButton)
@@ -54,7 +65,7 @@ TSharedRef<SDockTab> FMarkelNunezToolEditorModule::OnSpawnCityTab(const FSpawnTa
 
 	const auto Generate = [this]()
 	{
-		const bool bGenerated = UCityToolLibrary::GenerateCity(CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation, CitySeed);
+		const bool bGenerated = UCityToolLibrary::GenerateCity(CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation, ParkingOccupancy, ParkingClearanceMeters, CarVariation, bStopSigns, bYieldSigns, bDirectionSigns, bSpeedLimitSigns, SignDistanceMeters, SignSpacingMeters, CitySeed);
 		CityStatus = bGenerated
 			? FText::Format(NSLOCTEXT("MarkelNunezTool", "CityGenerated", "Generated with seed {0}."), FText::AsNumber(CitySeed))
 			: NSLOCTEXT("MarkelNunezTool", "CityGenerateFailed", "Generation failed, see the Output Log (LogTemp / LogPCG).");
@@ -98,6 +109,46 @@ TSharedRef<SDockTab> FMarkelNunezToolEditorModule::OnSpawnCityTab(const FSpawnTa
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
 			[
+				MakeRow(NSLOCTEXT("MarkelNunezTool", "ParkingOccupancyLabel", "Parking occupancy (0-1)"), ParkingOccupancy, 0.0, 1.0)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				MakeRow(NSLOCTEXT("MarkelNunezTool", "ParkingClearanceLabel", "Min distance to crossings (m)"), ParkingClearanceMeters, 0.0, 30.0)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				MakeRow(NSLOCTEXT("MarkelNunezTool", "CarVariationLabel", "Car model and color variation (0-1)"), CarVariation, 0.0, 1.0)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				SNew(SHorizontalBox)
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 12.0f, 0.0f)
+				[
+					MakeCheckRow(NSLOCTEXT("MarkelNunezTool", "StopSignsLabel", "Stop"), bStopSigns)
+				]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 12.0f, 0.0f)
+				[
+					MakeCheckRow(NSLOCTEXT("MarkelNunezTool", "YieldSignsLabel", "Yield"), bYieldSigns)
+				]
+				+ SHorizontalBox::Slot().AutoWidth().Padding(0.0f, 0.0f, 12.0f, 0.0f)
+				[
+					MakeCheckRow(NSLOCTEXT("MarkelNunezTool", "DirectionSignsLabel", "Direction"), bDirectionSigns)
+				]
+				+ SHorizontalBox::Slot().AutoWidth()
+				[
+					MakeCheckRow(NSLOCTEXT("MarkelNunezTool", "SpeedLimitSignsLabel", "Speed limit"), bSpeedLimitSigns)
+				]
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				MakeRow(NSLOCTEXT("MarkelNunezTool", "SignDistanceLabel", "Sign distance to intersection (m)"), SignDistanceMeters, 0.0, 20.0)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
+				MakeRow(NSLOCTEXT("MarkelNunezTool", "SignSpacingLabel", "Speed sign every (m, 0 = none)"), SignSpacingMeters, 0.0, 200.0)
+			]
+			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f)
+			[
 				MakeRow(NSLOCTEXT("MarkelNunezTool", "CitySeedLabel", "Seed"), CitySeed, 0, 999999)
 			]
 			+ SVerticalBox::Slot().AutoHeight().Padding(4.0f, 12.0f, 4.0f, 4.0f)
@@ -117,7 +168,7 @@ TSharedRef<SDockTab> FMarkelNunezToolEditorModule::OnSpawnCityTab(const FSpawnTa
 				MakeButton(NSLOCTEXT("MarkelNunezTool", "TestDeterminismButton", "Test determinism"), [this]()
 				{
 					FString Report;
-					const bool bPassed = UCityToolLibrary::TestDeterminism(Report, CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation);
+					const bool bPassed = UCityToolLibrary::TestDeterminism(Report, CitySizeMeters, BlockSizeMeters, BuildingDensity, BuildingHeightMeters, BuildingVariation, ParkRatio, ParkTreeDensity, VegetationScaleVariation, ParkingOccupancy, ParkingClearanceMeters, CarVariation, bStopSigns, bYieldSigns, bDirectionSigns, bSpeedLimitSigns, SignDistanceMeters, SignSpacingMeters);
 					CityStatus = FText::FromString(FString::Printf(TEXT("%s %s"), bPassed ? TEXT("PASSED.") : TEXT("FAILED."), *Report));
 				})
 			]
